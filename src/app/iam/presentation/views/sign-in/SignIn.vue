@@ -18,11 +18,11 @@ iam.clearError();
 function submit() {
   if (iam.loading.value) return;
   iam.signIn(
-    new SignInCommand({
-      email: form.email.trim().toLowerCase(),
-      password: form.password,
-    }),
-    router,
+      new SignInCommand({
+        email: form.email.trim().toLowerCase(),
+        password: form.password,
+      }),
+      router,
   );
 }
 </script>
@@ -37,6 +37,11 @@ function submit() {
             t("iam.auth.hero-title-line-2")
           }}
         </h1>
+        <p>
+          <RouterLink to="/iam/recover-password">{{
+              t("iam.recovery.title")
+            }}</RouterLink>
+        </p>
         <p>{{ t("iam.auth.hero-description") }}</p>
       </div>
       <small>RentBuild</small>
@@ -48,9 +53,9 @@ function submit() {
         <h2>{{ t("iam.sign-in.card-title") }}</h2>
         <p>{{ t("iam.sign-in.card-subtitle") }}</p>
         <Feedback
-          :loading="iam.loading.value"
-          :error="iam.error.value"
-          :success="
+            :loading="iam.loading.value"
+            :error="iam.error.value"
+            :success="
             route.query.registered
               ? t('iam.sign-in.registration-success')
               : false
@@ -59,23 +64,23 @@ function submit() {
         <form @submit.prevent="submit" :aria-busy="iam.loading.value">
           <fieldset :disabled="iam.loading.value">
             <label for="sign-in-email"
-              >{{ t("iam.sign-in.email") }}
+            >{{ t("iam.sign-in.email") }}
               <InputText
-                id="sign-in-email"
-                v-model="form.email"
-                type="email"
-                required
-                autocomplete="username"
+                  id="sign-in-email"
+                  v-model="form.email"
+                  type="email"
+                  required
+                  autocomplete="username"
               />
             </label>
             <label for="sign-in-password"
-              >{{ t("iam.sign-in.password") }}
+            >{{ t("iam.sign-in.password") }}
               <InputText
-                id="sign-in-password"
-                v-model="form.password"
-                :type="visible ? 'text' : 'password'"
-                required
-                autocomplete="current-password"
+                  id="sign-in-password"
+                  v-model="form.password"
+                  :type="visible ? 'text' : 'password'"
+                  required
+                  autocomplete="current-password"
               />
             </label>
             <label class="check" for="sign-in-visible">
@@ -84,17 +89,17 @@ function submit() {
               }}
             </label>
             <Button
-              type="submit"
-              :disabled="iam.loading.value"
-              :label="t('iam.sign-in.submit')"
+                type="submit"
+                :disabled="iam.loading.value"
+                :label="t('iam.sign-in.submit')"
             />
           </fieldset>
         </form>
         <p>
           {{ t("iam.sign-in.no-account") }}
           <RouterLink to="/iam/sign-up">{{
-            t("iam.sign-in.create-account")
-          }}</RouterLink>
+              t("iam.sign-in.create-account")
+            }}</RouterLink>
         </p>
       </div>
     </section>
