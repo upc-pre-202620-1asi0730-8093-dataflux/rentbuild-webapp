@@ -56,8 +56,8 @@ export class HttpClient {
     return new Observable((subscriber) => {
       const controller = new AbortController();
       const url = new URL(
-        endpoint,
-        globalThis.location?.origin ?? "http://localhost",
+          endpoint,
+          globalThis.location?.origin ?? "http://localhost",
       );
       if (options.params) url.search = options.params.toString();
       const headers = { Accept: "application/json" };
@@ -65,47 +65,55 @@ export class HttpClient {
       const token = globalThis.localStorage?.getItem("token");
       if (token) headers.Authorization = `Bearer ${token}`;
       const resource =
-        method === "POST" && body?.id === 0
-          ? Object.fromEntries(
-              Object.entries(body).filter(([key]) => key !== "id"),
-            )
-          : body;
+          method === "POST" && body?.id === 0
+              ? Object.fromEntries(
+                  Object.entries(body).filter(([key]) => key !== "id"),
+              )
+              : body;
       axios
-        .request({
-          url: url.toString(),
-          method,
-          headers,
-          data: resource,
-          signal: controller.signal,
-          validateStatus: () => true,
-        })
-        .then((response) => {
-          const isAuthenticationRequest = /\/(authentication|auth)\//.test(
-            url.pathname,
-          );
-          if (
-            response.status === 401 &&
-            !isAuthenticationRequest &&
-            token &&
-            !subscriber.closed &&
-            globalThis.localStorage?.getItem("token") === token
-          )
-            sessionExpired.next();
-          const data = response.status === 204 ? undefined : response.data;
-          if (response.status < 200 || response.status >= 300) {
-            const error = new Error(data?.message ?? `HTTP ${response.status}`);
-            error.status = response.status;
-            error.error = data;
-            throw error;
-          }
-          subscriber.next(data);
-          subscriber.complete();
-        })
-        .catch((error) => {
-          if (!subscriber.closed) subscriber.error(error);
-        });
+          .request({
+            url: url.toString(),
+            method,
+            headers,
+            data: resource,
+            signal: controller.signal,
+            validateStatus: () => true,
+          })
+          .then((response) => {
+            const isAuthenticationRequest = /\/(authentication|auth)\//.test(
+                url.pathname,
+            );
+            if (
+                response.status === 401 &&
+                !isAuthenticationRequest &&
+                token &&
+                !subscriber.closed &&
+                globalThis.localStorage?.getItem("token") === token
+            )
+              sessionExpired.next();
+            const data = response.status === 204 ? undefined : response.data;
+            if (response.status < 200 || response.status >= 300) {
+              const error = new Error(
+                  data?.detail ?? data?.message ?? `HTTP ${response.status}`,
+              );
+              error.status = response.status;
+              error.error = data;
+              throw error;
+            }
+            subscriber.next(data);
+            subscriber.complete();
+          })
+          .catch((error) => {
+            if (!subscriber.closed) {
+              if (error.status == null) error.status = 0;
+              subscriber.error(error);
+            }
+          });
       return () => controller.abort();
     });
+  }
+  delete(url) {
+    return this.request("DELETE", url);
   }
   get(url, options) {
     return this.request("GET", url, undefined, options);
