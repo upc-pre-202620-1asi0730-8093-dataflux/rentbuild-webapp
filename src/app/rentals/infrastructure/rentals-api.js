@@ -1,10 +1,14 @@
-import { BaseApi } from '../../shared/infrastructure/base-api.js';
+import { BaseApi } from "../../shared/infrastructure/base-api.js";
 
-import { DeliveryApiEndpoint } from './delivery-api-endpoint.js';
-import { EquipmentReturnApiEndpoint } from './equipment-return-api-endpoint.js';
-import { RentalApiEndpoint } from './rental-api-endpoint.js';
-import { RentalRequestApiEndpoint } from './rental-request-api-endpoint.js';
+import { DeliveryApiEndpoint } from "./delivery-api-endpoint.js";
+import { EquipmentReturnApiEndpoint } from "./equipment-return-api-endpoint.js";
+import { RentalApiEndpoint } from "./rental-api-endpoint.js";
+import { RentalRequestApiEndpoint } from "./rental-request-api-endpoint.js";
 export class RentalsApi extends BaseApi {
+  reschedulePendingRentalRequest(requestId, period) {
+    return this.#rentalRequestEndpoint.reschedulePending(requestId, period);
+  }
+
   #rentalRequestEndpoint = new RentalRequestApiEndpoint(this.http);
   #rentalEndpoint = new RentalApiEndpoint(this.http);
   #deliveryEndpoint = new DeliveryApiEndpoint(this.http);
