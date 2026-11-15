@@ -7,6 +7,12 @@ import { SUBSCRIPTION_ACCESS_PORT } from "./rentals/infrastructure/subscription-
 import { MAINTENANCE_ACCESS_PORT } from "./maintenance/infrastructure/maintenance-access.port.js";
 
 export const routes = [
+  {
+    path: "/maintenance/equipment/:equipmentId/history",
+    component: () =>
+      import("./maintenance/presentation/views/equipment-history/EquipmentHistory.vue"),
+    meta: { role: "rental_company" },
+  },
   { path: "/", redirect: "/iam/sign-in" },
   ...iamRoutes,
   {
