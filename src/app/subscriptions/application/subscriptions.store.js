@@ -1,14 +1,17 @@
 import { defineStore } from "pinia";
-import { registerStore, exposeStore } from "../../shared/infrastructure/services.js";
-import { resolve, sessionEnded } from '../../shared/infrastructure/services.js';
-import { shallowRef, shallowReadonly } from 'vue';
-import { takeUntil } from 'rxjs';
-import { DateRange } from '../domain/value-object/date-range.value-object.js';
-import { PlanStatus } from '../domain/model/plan-status.enum.js';
+import {
+  registerStore,
+  exposeStore,
+} from "../../shared/infrastructure/services.js";
+import { resolve, sessionEnded } from "../../shared/infrastructure/services.js";
+import { shallowRef, shallowReadonly } from "vue";
+import { takeUntil } from "rxjs";
+import { DateRange } from "../domain/value-object/date-range.value-object.js";
+import { PlanStatus } from "../domain/model/plan-status.enum.js";
 
-import { SubscriptionStatus } from '../domain/model/subscription-status.enum.js';
-import { UserSubscription } from '../domain/model/user-subscription.entity.js';
-import { SubscriptionsApi } from '../infrastructure/subscriptions-api.js';
+import { SubscriptionStatus } from "../domain/model/subscription-status.enum.js";
+import { UserSubscription } from "../domain/model/user-subscription.entity.js";
+import { SubscriptionsApi } from "../infrastructure/subscriptions-api.js";
 export class SubscriptionsStore {
   #subscriptionsApi = resolve(SubscriptionsApi);
   #subscriptionRequestVersion = 0;
@@ -25,6 +28,40 @@ export class SubscriptionsStore {
   error = shallowReadonly(this.#errorState);
   #subscriptionErrorState = shallowRef(null);
   subscriptionError = shallowReadonly(this.#subscriptionErrorState);
+  cancelCurrentSubscription() {
+    const current = this.#currentSubscriptionState.value;
+    if (!current || this.#subscriptionLoadingState.value) return;
+    const version = ++this.#subscriptionRequestVersion;
+    this.#subscriptionLoadingState.value = true;
+    this.#subscriptionErrorState.value = null;
+    this.#subscriptionsApi
+      .cancelUserSubscription(current.id)
+      .pipe(takeUntil(sessionEnded))
+      .subscribe({
+        next: (cancelled) => {
+          if (version !== this.#subscriptionRequestVersion) return;
+          if (
+            cancelled.id !== current.id ||
+            cancelled.userId !== current.userId ||
+            cancelled.planId !== current.planId ||
+            cancelled.status !== SubscriptionStatus.CANCELLED ||
+            cancelled.autoRenew !== false
+          )
+            this.#subscriptionErrorState.value =
+              "The server did not confirm cancellation";
+          else this.#currentSubscriptionState.value = null;
+          this.#subscriptionLoadingState.value = false;
+        },
+        error: (error) => {
+          if (version !== this.#subscriptionRequestVersion) return;
+          this.#subscriptionErrorState.value = this.#formatError(
+            error,
+            "Failed to cancel subscription",
+          );
+          this.#subscriptionLoadingState.value = false;
+        },
+      });
+  }
   loadPlans() {
     const requestVersion = ++this.#planRequestVersion;
     this.#loadingState.value = true;
@@ -35,14 +72,19 @@ export class SubscriptionsStore {
       .subscribe({
         next: (plans) => {
           if (requestVersion !== this.#planRequestVersion) return;
-          this.#plansState.value = plans.filter((plan) => plan.status === PlanStatus.ACTIVE);
+          this.#plansState.value = plans.filter(
+            (plan) => plan.status === PlanStatus.ACTIVE,
+          );
           this.#loadingState.value = false;
           this.#errorState.value = null;
         },
         error: (error) => {
           if (requestVersion !== this.#planRequestVersion) return;
           this.#plansState.value = [];
-          this.#errorState.value = this.#formatError(error, 'Failed to load subscription plans');
+          this.#errorState.value = this.#formatError(
+            error,
+            "Failed to load subscription plans",
+          );
           this.#loadingState.value = false;
         },
       });
@@ -62,7 +104,8 @@ export class SubscriptionsStore {
           const currentSubscription =
             subscriptions.find(
               (subscription) =>
-                subscription.userId === userId && subscription.isActive(referenceDate),
+                subscription.userId === userId &&
+                subscription.isActive(referenceDate),
             ) ?? null;
           this.#currentSubscriptionState.value = currentSubscription;
           this.#subscriptionLoadingState.value = false;
@@ -73,7 +116,7 @@ export class SubscriptionsStore {
           this.#currentSubscriptionState.value = null;
           this.#subscriptionErrorState.value = this.#formatError(
             error,
-            'Failed to load current subscription',
+            "Failed to load current subscription",
           );
           this.#subscriptionLoadingState.value = false;
         },
@@ -96,12 +139,15 @@ export class SubscriptionsStore {
     if (this.#subscriptionLoadingState.value) return;
     const startDate = new Date();
     if (this.#currentSubscriptionState.value?.isActive(startDate)) {
-      this.#subscriptionErrorState.value = 'The user already has an active subscription';
+      this.#subscriptionErrorState.value =
+        "The user already has an active subscription";
       return;
     }
-    const plan = this.#plansState.value.find((currentPlan) => currentPlan.id === planId);
+    const plan = this.#plansState.value.find(
+      (currentPlan) => currentPlan.id === planId,
+    );
     if (!plan || plan.status !== PlanStatus.ACTIVE) {
-      this.#subscriptionErrorState.value = 'The selected plan is not available';
+      this.#subscriptionErrorState.value = "The selected plan is not available";
       return;
     }
     const subscription = new UserSubscription({
@@ -114,25 +160,29 @@ export class SubscriptionsStore {
     });
     this.#saveSubscription(
       this.#subscriptionsApi.createUserSubscription(subscription),
-      'Failed to create subscription',
+      "Failed to create subscription",
     );
   }
   changePlan(planId) {
     if (this.#subscriptionLoadingState.value) return;
     const currentSubscription = this.#currentSubscriptionState.value;
     if (!currentSubscription) {
-      this.#subscriptionErrorState.value = 'There is no active subscription to update';
+      this.#subscriptionErrorState.value =
+        "There is no active subscription to update";
       return;
     }
     const referenceDate = new Date();
     const isCurrentPeriodActive = currentSubscription.isActive(referenceDate);
     if (isCurrentPeriodActive && currentSubscription.planId === planId) {
-      this.#subscriptionErrorState.value = 'The selected plan is already the current plan';
+      this.#subscriptionErrorState.value =
+        "The selected plan is already the current plan";
       return;
     }
-    const selectedPlan = this.#plansState.value.find((plan) => plan.id === planId);
+    const selectedPlan = this.#plansState.value.find(
+      (plan) => plan.id === planId,
+    );
     if (!selectedPlan || selectedPlan.status !== PlanStatus.ACTIVE) {
-      this.#subscriptionErrorState.value = 'The selected plan is not available';
+      this.#subscriptionErrorState.value = "The selected plan is not available";
       return;
     }
     const updatedSubscription = new UserSubscription({
@@ -147,38 +197,46 @@ export class SubscriptionsStore {
     });
     this.#saveSubscription(
       this.#subscriptionsApi.updateUserSubscription(updatedSubscription),
-      'Failed to update subscription',
+      "Failed to update subscription",
     );
   }
   #saveSubscription(operation$, fallbackMessage) {
     const requestVersion = ++this.#subscriptionRequestVersion;
     this.#subscriptionLoadingState.value = true;
     this.#subscriptionErrorState.value = null;
-    operation$
-      .pipe(takeUntil(sessionEnded))
-      .subscribe({
-        next: (subscription) => {
-          if (requestVersion !== this.#subscriptionRequestVersion) return;
-          this.#currentSubscriptionState.value = subscription;
-          this.#subscriptionLoadingState.value = false;
-          this.#subscriptionErrorState.value = null;
-        },
-        error: (error) => {
-          if (requestVersion !== this.#subscriptionRequestVersion) return;
-          this.#subscriptionErrorState.value = this.#formatError(error, fallbackMessage);
-          this.#subscriptionLoadingState.value = false;
-        },
-      });
+    operation$.pipe(takeUntil(sessionEnded)).subscribe({
+      next: (subscription) => {
+        if (requestVersion !== this.#subscriptionRequestVersion) return;
+        this.#currentSubscriptionState.value = subscription;
+        this.#subscriptionLoadingState.value = false;
+        this.#subscriptionErrorState.value = null;
+      },
+      error: (error) => {
+        if (requestVersion !== this.#subscriptionRequestVersion) return;
+        this.#subscriptionErrorState.value = this.#formatError(
+          error,
+          fallbackMessage,
+        );
+        this.#subscriptionLoadingState.value = false;
+      },
+    });
   }
   #createMonthlyPeriod(startDate) {
-    return new DateRange({ startDate, endDate: this.#calculateMonthlyEndDate(startDate) });
+    return new DateRange({
+      startDate,
+      endDate: this.#calculateMonthlyEndDate(startDate),
+    });
   }
   #calculateMonthlyEndDate(startDate) {
     const result = new Date(startDate);
     const originalDay = result.getDate();
     result.setDate(1);
     result.setMonth(result.getMonth() + 1);
-    const lastDay = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
+    const lastDay = new Date(
+      result.getFullYear(),
+      result.getMonth() + 1,
+      0,
+    ).getDate();
     result.setDate(Math.min(originalDay, lastDay));
     return result;
   }
@@ -190,5 +248,7 @@ export class SubscriptionsStore {
   }
 }
 
-export const useSubscriptionsStore = defineStore("subscriptions", () => exposeStore(new SubscriptionsStore()));
+export const useSubscriptionsStore = defineStore("subscriptions", () =>
+  exposeStore(new SubscriptionsStore()),
+);
 registerStore(SubscriptionsStore, useSubscriptionsStore);

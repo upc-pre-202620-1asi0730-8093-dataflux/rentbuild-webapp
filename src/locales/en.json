@@ -225,9 +225,17 @@
         "no-current": "There is no current subscription to change. Reload and select a plan.",
         "same-plan": "This is already your current plan.",
         "invalid-data": "Could not verify the demo response. Reload before trying again.",
-        "fallback": "The demo request could not be completed. Try again."
+        "fallback": "The demo request could not be completed. Try again.",
+        "cancel": "Cancellation could not be confirmed. Reload your subscription before trying again."
       },
-      "retry": "Retry loading plans"
+      "retry": "Retry loading plans",
+      "manage-subscription": "Manage subscription",
+      "cancel-plan-title": "Cancel your current subscription?",
+      "cancel-plan-description": "Cancellation takes effect immediately. Your company will lose access to modules requiring an active plan.",
+      "cancel-plan-warning": "Existing records will not be deleted. You can subscribe again and regain the modules included in the selected plan. This operation does not automatically refund payments.",
+      "keep-plan": "Keep my plan",
+      "cancel-plan-action": "Confirm cancellation",
+      "cancel-success": "Your subscription was cancelled successfully."
     }
   },
   "equipment": {

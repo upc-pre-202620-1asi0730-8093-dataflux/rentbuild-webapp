@@ -37,6 +37,11 @@ const errorKeys = new Map([
   ],
   ["Failed to create subscription", "subscriptions.plans.errors.create"],
   ["Failed to update subscription", "subscriptions.plans.errors.update"],
+  ["Failed to cancel subscription", "subscriptions.plans.errors.cancel"],
+  [
+    "The server did not confirm cancellation",
+    "subscriptions.plans.errors.cancel",
+  ],
   [
     "The user already has an active subscription",
     "subscriptions.plans.errors.active-exists",

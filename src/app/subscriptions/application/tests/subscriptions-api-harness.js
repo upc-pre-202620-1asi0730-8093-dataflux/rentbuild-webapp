@@ -17,19 +17,18 @@ export async function createSubscriptionsHarness(resources = {}) {
   });
   const calls = [];
   const heldResponses = [];
-  const respond = (status, data) =>
-    ({data, status});
+  const respond = (status, data) => ({ data, status });
 
   vi.spyOn(axios, "request").mockImplementation(async (options) => {
     const rawUrl = options.url;
     const url = new URL(rawUrl);
-    const [resource, rawId] = url.pathname
+    const [resource, rawId, action] = url.pathname
       .replace(/^\/api\/v1\//, "")
       .split("/");
     const id = rawId === undefined ? null : Number(rawId);
     const method = options.method ?? "GET";
     const body = options.data;
-    calls.push({ method, resource, id, body });
+    calls.push({ method, resource, id, body, action });
     const rows = db[resource];
     if (!Array.isArray(rows))
       return respond(404, { message: "Unknown test resource" });
@@ -51,7 +50,11 @@ export async function createSubscriptionsHarness(resources = {}) {
       const index = rows.findIndex((row) => row.id === id);
       if (index < 0) return respond(404, { message: "Resource not found" });
       rows[index] =
-        method === "PATCH" ? { ...rows[index], ...body } : { ...body, id };
+        method === "PATCH" && action === "cancel"
+          ? { ...rows[index], status: "CANCELLED", autoRenew: false }
+          : method === "PATCH"
+            ? { ...rows[index], ...body }
+            : { ...body, id };
       response = respond(200, rows[index]);
     }
     const pending = heldResponses.find(
