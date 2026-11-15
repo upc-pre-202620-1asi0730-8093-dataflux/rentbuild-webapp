@@ -1,6 +1,80 @@
 {
-  "users": [],
-  "profiles": [],
+  "users": [
+    {
+      "id": 1,
+      "email": "manzanarapera352@gmail.com",
+      "password": "123456789",
+      "role": "construction_company",
+      "status": "active"
+    },
+    {
+      "id": 2,
+      "email": "brunito_02@outllook.com",
+      "password": "123456789",
+      "role": "rental_company",
+      "status": "active"
+    },
+    {
+      "id": 3,
+      "email": "u202111529@upc.edu.pe",
+      "password": "12345678",
+      "role": "rental_company",
+      "status": "active"
+    }
+  ],
+  "profiles": [
+    {
+      "id": 1,
+      "userId": 1,
+      "firstName": "bruno",
+      "lastName": "construction",
+      "contactEmail": "manzanarapera352@gmail.com",
+      "phoneNumber": "",
+      "companyName": "hola",
+      "address": {
+        "street": "",
+        "district": "",
+        "city": "",
+        "country": "Peru",
+        "latitude": 0,
+        "longitude": 0
+      }
+    },
+    {
+      "id": 2,
+      "userId": 2,
+      "firstName": "bruno",
+      "lastName": "rentals",
+      "contactEmail": "brunito_02@outllook.com",
+      "phoneNumber": "",
+      "companyName": "brunohola",
+      "address": {
+        "street": "",
+        "district": "",
+        "city": "",
+        "country": "Peru",
+        "latitude": 0,
+        "longitude": 0
+      }
+    },
+    {
+      "id": 3,
+      "userId": 3,
+      "firstName": "bruno",
+      "lastName": "rentals",
+      "contactEmail": "u202111529@upc.edu.pe",
+      "phoneNumber": "",
+      "companyName": "rentals",
+      "address": {
+        "street": "",
+        "district": "",
+        "city": "",
+        "country": "Peru",
+        "latitude": 0,
+        "longitude": 0
+      }
+    }
+  ],
   "subscription-plans": [
     {
       "id": 1,
@@ -30,7 +104,17 @@
       "status": "ACTIVE"
     }
   ],
-  "user-subscriptions": [],
+  "user-subscriptions": [
+    {
+      "id": 1,
+      "userId": 3,
+      "planId": 3,
+      "startDate": "2026-11-15T10:03:10.964Z",
+      "endDate": "2026-12-15T10:03:10.964Z",
+      "status": "ACTIVE",
+      "autoRenew": true
+    }
+  ],
   "equipment": [],
   "rental-requests": [],
   "rentals": [],

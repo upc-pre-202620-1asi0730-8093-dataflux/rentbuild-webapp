@@ -79,6 +79,6 @@ server.post("/api/v1/authentication/sign-up", (req, res) => {
 require("./migration-routes.cjs")(server, router.db);
 server.use(jsonServer.rewriter(require("./routes.json")));
 server.use(router);
-server.listen(Number(process.env.PORT || 3000), "127.0.0.1", () =>
-  console.log("RentBuild Fake API ready"),
+server.listen(Number(process.env.PORT || 3000), "0.0.0.0", () =>
+    console.log("RentBuild Fake API ready"),
 );
