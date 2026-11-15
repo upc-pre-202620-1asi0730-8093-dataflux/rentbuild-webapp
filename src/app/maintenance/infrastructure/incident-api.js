@@ -1,7 +1,14 @@
-import { BaseApi } from '../../shared/infrastructure/base-api.js';
+import { BaseApi } from "../../shared/infrastructure/base-api.js";
 
-import { IncidentApiEndpoint } from './incident-api-endpoint.js';
+import { IncidentApiEndpoint } from "./incident-api-endpoint.js";
 export class IncidentApi extends BaseApi {
+  reactivateEquipment(equipmentId, inspectionConfirmed) {
+    return this.#incidentEndpoint.reactivateEquipment(
+        equipmentId,
+        inspectionConfirmed,
+    );
+  }
+
   #incidentEndpoint = new IncidentApiEndpoint(this.http);
   getIncidents() {
     return this.#incidentEndpoint.getAll();
