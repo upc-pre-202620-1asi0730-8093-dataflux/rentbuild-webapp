@@ -10,6 +10,9 @@ const { t, tm, te, locale } = useI18n();
 const selected = shallowRef(null);
 const confirmingPlanId = shallowRef(null);
 const saved = shallowRef(false);
+const cancelling = shallowRef(false);
+const cancellationPending = shallowRef(false);
+const cancelled = shallowRef(false);
 const subscriptionErrorFallback = shallowRef(
   "subscriptions.plans.errors.load-current",
 );
@@ -36,6 +39,8 @@ function load() {
   if (busy.value) return;
   selected.value = null;
   saved.value = false;
+  cancelling.value = false;
+  cancelled.value = false;
   subscriptionErrorFallback.value = "subscriptions.plans.errors.load-current";
   store.loadPlans();
   store.loadCurrentSubscription(iam.currentUserId.value);
@@ -45,7 +50,16 @@ onMounted(load);
 watch(
   () => store.subscriptionLoading.value,
   (loading, wasLoading) => {
-    if (loading || !wasLoading || confirmingPlanId.value === null) return;
+    if (loading || !wasLoading) return;
+    if (cancellationPending.value) {
+      if (!store.subscriptionError.value && !store.currentSubscription.value) {
+        cancelled.value = true;
+        cancelling.value = false;
+      }
+      cancellationPending.value = false;
+      return;
+    }
+    if (confirmingPlanId.value === null) return;
     if (
       !store.subscriptionError.value &&
       store.currentSubscription.value?.planId === confirmingPlanId.value
@@ -62,6 +76,7 @@ function confirm() {
   if (!selected.value || blocked.value || confirmingPlanId.value !== null)
     return;
   saved.value = false;
+  cancelled.value = false;
   confirmingPlanId.value = selected.value.id;
   const changing = Boolean(store.currentSubscription.value);
   subscriptionErrorFallback.value = changing
@@ -70,6 +85,17 @@ function confirm() {
   if (changing) store.changePlan(selected.value.id);
   else store.subscribeToPlan(iam.currentUserId.value, selected.value.id);
   if (!store.subscriptionLoading.value) confirmingPlanId.value = null;
+}
+
+function cancelCurrentPlan() {
+  if (blocked.value || !store.currentSubscription.value) return;
+  saved.value = false;
+  selected.value = null;
+  cancelled.value = false;
+  subscriptionErrorFallback.value = "subscriptions.plans.errors.cancel";
+  cancellationPending.value = true;
+  store.cancelCurrentSubscription();
+  if (!store.subscriptionLoading.value) cancellationPending.value = false;
 }
 
 const key = (plan) => String(plan.name ?? "").toLowerCase();
@@ -90,6 +116,8 @@ function select(plan) {
   if (blocked.value || isCurrent(plan)) return;
   selected.value = plan;
   saved.value = false;
+  cancelled.value = false;
+  cancelling.value = false;
 }
 </script>
 <template>
@@ -99,7 +127,14 @@ function select(plan) {
   <Feedback
     :loading="busy"
     :error="error"
-    :success="saved && !error ? t('subscriptions.plans.save-success') : false"
+    :success="
+      !error &&
+      (cancelled
+        ? t('subscriptions.plans.cancel-success')
+        : saved
+          ? t('subscriptions.plans.save-success')
+          : false)
+    "
   />
   <button v-if="error" class="secondary" :disabled="busy" @click="load">
     {{ t("subscriptions.plans.retry") }}
@@ -130,6 +165,25 @@ function select(plan) {
         }}
       </p>
       <p>{{ t("subscriptions.plans.demo-renewal-help") }}</p>
+      <button class="secondary" :disabled="busy" @click="cancelling = true">
+        {{ t("subscriptions.plans.cancel-plan-title") }}
+      </button>
+      <section v-if="cancelling" class="confirmation">
+        <h3>{{ t("subscriptions.plans.cancel-plan-title") }}</h3>
+        <p>{{ t("subscriptions.plans.cancel-plan-description") }}</p>
+        <p>{{ t("subscriptions.plans.cancel-plan-warning") }}</p>
+        <div class="actions">
+          <button :disabled="blocked" @click="cancelCurrentPlan">
+            {{ t("subscriptions.plans.cancel-plan-action") }}</button
+          ><button
+            class="secondary"
+            :disabled="busy"
+            @click="cancelling = false"
+          >
+            {{ t("subscriptions.plans.keep-plan") }}
+          </button>
+        </div>
+      </section>
     </template>
     <p
       v-else-if="

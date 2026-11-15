@@ -1,8 +1,11 @@
-import { BaseApi } from '../../shared/infrastructure/base-api.js';
+import { BaseApi } from "../../shared/infrastructure/base-api.js";
 
-import { SubscriptionPlanApiEndpoint } from './subscription-plan-api-endpoint.js';
-import { UserSubscriptionApiEndpoint } from './user-subscription-api-endpoint.js';
+import { SubscriptionPlanApiEndpoint } from "./subscription-plan-api-endpoint.js";
+import { UserSubscriptionApiEndpoint } from "./user-subscription-api-endpoint.js";
 export class SubscriptionsApi extends BaseApi {
+  cancelUserSubscription(id) {
+    return this.#userSubscriptionEndpoint.cancel(id);
+  }
   #subscriptionPlanEndpoint = new SubscriptionPlanApiEndpoint(this.http);
   #userSubscriptionEndpoint = new UserSubscriptionApiEndpoint(this.http);
   getSubscriptionPlans() {

@@ -1,183 +1,212 @@
+import { shallowRef, shallowReadonly, computed } from "vue";
+import { takeUntil } from "rxjs";
 import { defineStore } from "pinia";
-import { registerStore, exposeStore } from "../../shared/infrastructure/services.js";
-import { resolve, sessionEnded } from '../../shared/infrastructure/services.js';
-import { shallowRef, shallowReadonly, computed } from 'vue';
-import { takeUntil } from 'rxjs';
-import { forkJoin, map, switchMap, tap, throwError } from 'rxjs';
-import { Incident } from '../domain/model/incident.entity.js';
-import { IncidentStatus } from '../domain/model/incident-status.enum.js';
-import { IncidentReactivationPolicy } from '../domain/model/incident-reactivation-policy.js';
-import { MAINTENANCE_RENTAL_ACTIVITY_PORT } from '../infrastructure/rental-activity.port.js';
-import { IncidentApi } from '../infrastructure/incident-api.js';
-import { MAINTENANCE_EQUIPMENT_INFORMATION_PORT } from '../infrastructure/equipment-information.port.js';
-import { MAINTENANCE_EQUIPMENT_OPERATION_PORT } from '../infrastructure/equipment-incident-operation.port.js';
+import {
+  registerStore,
+  exposeStore,
+} from "../../shared/infrastructure/services.js";
+import {
+  resolve,
+  sessionEnded,
+  HttpClient,
+} from "../../shared/infrastructure/services.js";
+import { forkJoin, map } from "rxjs";
+import { Incident } from "../domain/model/incident.entity.js";
+import { IncidentStatus } from "../domain/model/incident-status.enum.js";
+import { IncidentReactivationPolicy } from "../domain/model/incident-reactivation-policy.js";
+import { IncidentApi } from "../infrastructure/incident-api.js";
+import { MAINTENANCE_EQUIPMENT_INFORMATION_PORT } from "../infrastructure/equipment-information.port.js";
 export class IncidentStore {
   #incidentApi = resolve(IncidentApi);
   #equipmentInformation = resolve(MAINTENANCE_EQUIPMENT_INFORMATION_PORT);
-  #equipmentOperation = resolve(MAINTENANCE_EQUIPMENT_OPERATION_PORT);
-  #rentalActivity = resolve(MAINTENANCE_RENTAL_ACTIVITY_PORT);
   #loadVersion = 0;
-  #incidentsState = shallowRef([]);
-  incidents = shallowReadonly(this.#incidentsState);
-  #equipmentInformationState = shallowRef([]);
-  equipmentInformation = shallowReadonly(this.#equipmentInformationState);
-  #loadingState = shallowRef(false);
-  loading = shallowReadonly(this.#loadingState);
-  #savingState = shallowRef(false);
-  saving = shallowReadonly(this.#savingState);
-  #saveSucceededState = shallowRef(false);
-  saveSucceeded = shallowReadonly(this.#saveSucceededState);
-  #resolvingIncidentIdState = shallowRef(null);
-  resolvingIncidentId = shallowReadonly(this.#resolvingIncidentIdState);
-  #resolveSucceededState = shallowRef(false);
-  resolveSucceeded = shallowReadonly(this.#resolveSucceededState);
-  #restrictingIncidentIdState = shallowRef(null);
-  restrictingIncidentId = shallowReadonly(this.#restrictingIncidentIdState);
-  #restrictionSucceededState = shallowRef(false);
-  restrictionSucceeded = shallowReadonly(this.#restrictionSucceededState);
-  #reactivatingEquipmentIdState = shallowRef(null);
-  reactivatingEquipmentId = shallowReadonly(this.#reactivatingEquipmentIdState);
-  #reactivationSucceededState = shallowRef(false);
-  reactivationSucceeded = shallowReadonly(this.#reactivationSucceededState);
-  reactivatableEquipment = computed(() =>
-    this.#equipmentInformationState.value.filter(
-      (equipment) =>
-        equipment.status === 'MAINTENANCE' &&
-        IncidentReactivationPolicy.canReactivate(equipment.id, this.#incidentsState.value),
-    ),
+  #incidentsSignal = shallowRef([]);
+  incidents = shallowReadonly(this.#incidentsSignal);
+  #equipmentInformationSignal = shallowRef([]);
+  equipmentInformation = shallowReadonly(this.#equipmentInformationSignal);
+  #loadingSignal = shallowRef(false);
+  loading = shallowReadonly(this.#loadingSignal);
+  #savingSignal = shallowRef(false);
+  saving = shallowReadonly(this.#savingSignal);
+  #saveSucceededSignal = shallowRef(false);
+  saveSucceeded = shallowReadonly(this.#saveSucceededSignal);
+  #resolvingIncidentIdSignal = shallowRef(null);
+  resolvingIncidentId = shallowReadonly(this.#resolvingIncidentIdSignal);
+  #resolveSucceededSignal = shallowRef(false);
+  resolveSucceeded = shallowReadonly(this.#resolveSucceededSignal);
+  #restrictingIncidentIdSignal = shallowRef(null);
+  restrictingIncidentId = shallowReadonly(this.#restrictingIncidentIdSignal);
+  #restrictionSucceededSignal = shallowRef(false);
+  restrictionSucceeded = shallowReadonly(this.#restrictionSucceededSignal);
+  #reactivatingEquipmentIdSignal = shallowRef(null);
+  reactivatingEquipmentId = shallowReadonly(
+      this.#reactivatingEquipmentIdSignal,
   );
-  #errorState = shallowRef(null);
-  error = shallowReadonly(this.#errorState);
+  #reactivationSucceededSignal = shallowRef(false);
+  reactivationSucceeded = shallowReadonly(this.#reactivationSucceededSignal);
+  reactivatableEquipment = computed(() =>
+      this.#equipmentInformationSignal.value.filter(
+          (equipment) =>
+              equipment.status === "MAINTENANCE" &&
+              IncidentReactivationPolicy.canReactivate(
+                  equipment.id,
+                  this.#incidentsSignal.value,
+              ),
+      ),
+  );
+  // Candidates are displayed for a REQUEST, never treated as automatically eligible.
+  // Spring Boot remains the authority for maintenance, incidents and Rentals ACL evidence.
+  reactivationCandidates = computed(() =>
+      this.#equipmentInformationSignal.value.filter(
+          (equipment) =>
+              equipment.status === "MAINTENANCE" &&
+              !this.#incidentsSignal.value.some(
+                  (incident) =>
+                      incident.equipmentId === equipment.id &&
+                      incident.blocksRental &&
+                      incident.status === IncidentStatus.OPEN,
+              ),
+      ),
+  );
+  #errorSignal = shallowRef(null);
+  error = shallowReadonly(this.#errorSignal);
   loadForCompany(userId) {
     const loadVersion = ++this.#loadVersion;
-    this.#loadingState.value = true;
-    this.#saveSucceededState.value = false;
-    this.#resolveSucceededState.value = false;
-    this.#restrictionSucceededState.value = false;
-    this.#reactivationSucceededState.value = false;
-    this.#errorState.value = null;
+    this.#loadingSignal.value = true;
+    this.#saveSucceededSignal.value = false;
+    this.#resolveSucceededSignal.value = false;
+    this.#restrictionSucceededSignal.value = false;
+    this.#reactivationSucceededSignal.value = false;
+    this.#errorSignal.value = null;
     forkJoin({
-      equipmentInformation: this.#equipmentInformation.getEquipmentInformationByUserId(userId),
+      equipmentInformation:
+          this.#equipmentInformation.getEquipmentInformationByUserId(userId),
       incidents: this.#incidentApi.getIncidents(),
     })
-      .pipe(
-        map(({ equipmentInformation, incidents }) => {
-          const companyEquipment = equipmentInformation.filter(
-            (equipment) => equipment.ownerUserId === userId,
-          );
-          const equipmentIds = new Set(companyEquipment.map((equipment) => equipment.id));
-          return {
-            equipmentInformation: companyEquipment,
-            incidents: incidents
-              .filter((incident) => equipmentIds.has(incident.equipmentId))
-              .sort((first, second) => second.reportedAt.getTime() - first.reportedAt.getTime()),
-          };
-        }),
-        takeUntil(sessionEnded),
-      )
-      .subscribe({
-        next: ({ equipmentInformation, incidents }) => {
-          if (loadVersion !== this.#loadVersion) return;
-          this.#equipmentInformationState.value = equipmentInformation;
-          this.#incidentsState.value = incidents;
-          this.#loadingState.value = false;
-          this.#errorState.value = null;
-        },
-        error: (error) => {
-          if (loadVersion !== this.#loadVersion) return;
-          this.#equipmentInformationState.value = [];
-          this.#incidentsState.value = [];
-          this.#loadingState.value = false;
-          this.#errorState.value = this.#formatError(error, 'Failed to load incident records');
-        },
-      });
+        .pipe(
+            map(({ equipmentInformation, incidents }) => {
+              const companyEquipment = equipmentInformation.filter(
+                  (equipment) => equipment.ownerUserId === userId,
+              );
+              const equipmentIds = new Set(
+                  companyEquipment.map((equipment) => equipment.id),
+              );
+              return {
+                equipmentInformation: companyEquipment,
+                incidents: incidents
+                    .filter((incident) => equipmentIds.has(incident.equipmentId))
+                    .sort(
+                        (first, second) =>
+                            second.reportedAt.getTime() - first.reportedAt.getTime(),
+                    ),
+              };
+            }),
+            takeUntil(sessionEnded),
+        )
+        .subscribe({
+          next: ({ equipmentInformation, incidents }) => {
+            if (loadVersion !== this.#loadVersion) return;
+            this.#equipmentInformationSignal.value = equipmentInformation;
+            this.#incidentsSignal.value = incidents;
+            this.#loadingSignal.value = false;
+            this.#errorSignal.value = null;
+          },
+          error: (error) => {
+            if (loadVersion !== this.#loadVersion) return;
+            this.#equipmentInformationSignal.value = [];
+            this.#incidentsSignal.value = [];
+            this.#loadingSignal.value = false;
+            this.#errorSignal.value = this.#formatError(
+                error,
+                "Failed to load incident records",
+            );
+          },
+        });
   }
   registerIncident(userId, equipmentId, description, blocksRental = false) {
     if (
-      this.#savingState.value ||
-      this.#resolvingIncidentIdState.value !== null ||
-      this.#restrictingIncidentIdState.value !== null
+        this.#savingSignal.value ||
+        this.#resolvingIncidentIdSignal.value !== null ||
+        this.#restrictingIncidentIdSignal.value !== null
     ) {
       return;
     }
-    this.#saveSucceededState.value = false;
-    this.#resolveSucceededState.value = false;
-    this.#restrictionSucceededState.value = false;
-    this.#errorState.value = null;
-    const equipment = this.#equipmentInformationState.value.find(
-      (item) => item.id === equipmentId && item.ownerUserId === userId,
+    this.#saveSucceededSignal.value = false;
+    this.#resolveSucceededSignal.value = false;
+    this.#restrictionSucceededSignal.value = false;
+    this.#errorSignal.value = null;
+    const equipment = this.#equipmentInformationSignal.value.find(
+        (item) => item.id === equipmentId && item.ownerUserId === userId,
     );
     if (!equipment) {
-      this.#errorState.value = 'The selected equipment does not belong to this company';
+      this.#errorSignal.value =
+          "The selected equipment does not belong to this company";
       return;
     }
     let incident;
     try {
-      incident = Incident.report({
-        equipmentId,
-        description,
-        blocksRental,
-      });
+      incident = Incident.report({ equipmentId, description, blocksRental });
     } catch (error) {
-      this.#errorState.value = this.#formatError(error, 'Invalid incident information');
+      this.#errorSignal.value = this.#formatError(
+          error,
+          "Invalid incident information",
+      );
       return;
     }
-    this.#savingState.value = true;
-    let equipmentWasChanged = false;
-    const request$ = blocksRental
-      ? this.#equipmentOperation.markAsMaintenance(userId, equipmentId).pipe(
-        tap((transition) => {
-          equipmentWasChanged = transition === 'CHANGED';
-        }),
-        switchMap(() => this.#incidentApi.createIncident(incident)),
-      )
-      : this.#incidentApi.createIncident(incident);
-    request$.pipe(takeUntil(sessionEnded)).subscribe({
-      next: (createdIncident) => {
-        this.#incidentsState.value = ((incidents) =>
-          [createdIncident, ...incidents].sort(
-            (first, second) => second.reportedAt.getTime() - first.reportedAt.getTime(),
-          ))(this.#incidentsState.value);
-        if (blocksRental) this.#markEquipmentInMaintenance(equipmentId);
-        this.#savingState.value = false;
-        this.#saveSucceededState.value = true;
-        this.#errorState.value = null;
-      },
-      error: (error) => {
-        this.#savingState.value = false;
-        this.#saveSucceededState.value = false;
-        const message = this.#formatError(error, 'Failed to register incident');
-        this.#errorState.value = equipmentWasChanged
-          ? `${message}. The equipment was marked as MAINTENANCE. Check its status before trying again.`
-          : message;
-      },
-    });
+    // Spring Boot owns the incident creation and any required Inventory status change.
+    // Do not PATCH Inventory separately from the browser.
+    this.#savingSignal.value = true;
+    this.#incidentApi
+        .createIncident(incident)
+        .pipe(takeUntil(sessionEnded))
+        .subscribe({
+          next: (createdIncident) => {
+            this.#incidentsSignal.value = ((incidents) =>
+                [createdIncident, ...incidents].sort(
+                    (first, second) =>
+                        second.reportedAt.getTime() - first.reportedAt.getTime(),
+                ))(this.#incidentsSignal.value);
+            if (blocksRental) this.#markEquipmentInMaintenance(equipmentId);
+            this.#savingSignal.value = false;
+            this.#saveSucceededSignal.value = true;
+            this.#errorSignal.value = null;
+          },
+          error: (error) => {
+            this.#savingSignal.value = false;
+            this.#saveSucceededSignal.value = false;
+            this.#errorSignal.value = this.#formatError(
+                error,
+                "Failed to register incident",
+            );
+          },
+        });
   }
   resolveIncident(userId, incidentId) {
     if (
-      this.#savingState.value ||
-      this.#resolvingIncidentIdState.value !== null ||
-      this.#restrictingIncidentIdState.value !== null
+        this.#savingSignal.value ||
+        this.#resolvingIncidentIdSignal.value !== null ||
+        this.#restrictingIncidentIdSignal.value !== null
     ) {
       return;
     }
-    this.#saveSucceededState.value = false;
-    this.#resolveSucceededState.value = false;
-    this.#restrictionSucceededState.value = false;
-    this.#errorState.value = null;
-    const originalIncident = this.#incidentsState.value.find(
-      (incident) => incident.id === incidentId,
+    this.#saveSucceededSignal.value = false;
+    this.#resolveSucceededSignal.value = false;
+    this.#restrictionSucceededSignal.value = false;
+    this.#errorSignal.value = null;
+    const originalIncident = this.#incidentsSignal.value.find(
+        (incident) => incident.id === incidentId,
     );
     if (!originalIncident || originalIncident.status !== IncidentStatus.OPEN) {
-      this.#errorState.value = 'Incident is missing or already resolved';
+      this.#errorSignal.value = "Incident is missing or already resolved";
       return;
     }
-    const ownsEquipment = this.#equipmentInformationState.value.some(
-      (equipment) =>
-        equipment.id === originalIncident.equipmentId && equipment.ownerUserId === userId,
+    const ownsEquipment = this.#equipmentInformationSignal.value.some(
+        (equipment) =>
+            equipment.id === originalIncident.equipmentId &&
+            equipment.ownerUserId === userId,
     );
     if (!ownsEquipment) {
-      this.#errorState.value = 'Incident does not belong to this company';
+      this.#errorSignal.value = "Incident does not belong to this company";
       return;
     }
     let resolvedIncident;
@@ -193,53 +222,70 @@ export class IncidentStore {
       });
       resolvedIncident.resolve();
     } catch (error) {
-      this.#errorState.value = this.#formatError(error, 'Could not resolve incident');
+      this.#errorSignal.value = this.#formatError(
+          error,
+          "Could not resolve incident",
+      );
       return;
     }
-    this.#resolvingIncidentIdState.value = incidentId;
+    this.#resolvingIncidentIdSignal.value = incidentId;
     this.#incidentApi
-      .resolveIncident(resolvedIncident)
-      .pipe(takeUntil(sessionEnded))
-      .subscribe({
-        next: (persistedIncident) => {
-          this.#incidentsState.value = ((incidents) =>
-            incidents.map((incident) =>
-              incident.id === persistedIncident.id ? persistedIncident : incident,
-            ))(this.#incidentsState.value);
-          this.#resolvingIncidentIdState.value = null;
-          this.#resolveSucceededState.value = true;
-          this.#errorState.value = null;
-        },
-        error: (error) => {
-          this.#resolvingIncidentIdState.value = null;
-          this.#resolveSucceededState.value = false;
-          this.#errorState.value = this.#formatError(error, 'Failed to resolve incident');
-        },
-      });
+        .resolveIncident(resolvedIncident)
+        .pipe(takeUntil(sessionEnded))
+        .subscribe({
+          next: (persistedIncident) => {
+            this.#incidentsSignal.value = ((incidents) =>
+                incidents.map((incident) =>
+                    incident.id === persistedIncident.id
+                        ? persistedIncident
+                        : incident,
+                ))(this.#incidentsSignal.value);
+            this.#resolvingIncidentIdSignal.value = null;
+            this.#resolveSucceededSignal.value = true;
+            this.#errorSignal.value = null;
+          },
+          error: (error) => {
+            this.#resolvingIncidentIdSignal.value = null;
+            this.#resolveSucceededSignal.value = false;
+            this.#errorSignal.value = this.#formatError(
+                error,
+                "Failed to resolve incident",
+            );
+          },
+        });
   }
   requireRentalRestriction(userId, incidentId) {
     if (
-      this.#loadingState.value ||
-      this.#savingState.value ||
-      this.#resolvingIncidentIdState.value !== null ||
-      this.#restrictingIncidentIdState.value !== null
+        this.#loadingSignal.value ||
+        this.#savingSignal.value ||
+        this.#resolvingIncidentIdSignal.value !== null ||
+        this.#restrictingIncidentIdSignal.value !== null
     ) {
       return;
     }
-    this.#saveSucceededState.value = false;
-    this.#resolveSucceededState.value = false;
-    this.#restrictionSucceededState.value = false;
-    this.#errorState.value = null;
-    const current = this.#incidentsState.value.find((incident) => incident.id === incidentId);
-    if (!current || current.status !== IncidentStatus.OPEN || current.blocksRental) {
-      this.#errorState.value = 'Only open incidents without a rental restriction can be updated';
+    this.#saveSucceededSignal.value = false;
+    this.#resolveSucceededSignal.value = false;
+    this.#restrictionSucceededSignal.value = false;
+    this.#errorSignal.value = null;
+    const current = this.#incidentsSignal.value.find(
+        (incident) => incident.id === incidentId,
+    );
+    if (
+        !current ||
+        current.status !== IncidentStatus.OPEN ||
+        current.blocksRental
+    ) {
+      this.#errorSignal.value =
+          "Only open incidents without a rental restriction can be updated";
       return;
     }
-    const belongsToCompany = this.#equipmentInformationState.value.some(
-      (equipment) => equipment.id === current.equipmentId && equipment.ownerUserId === userId,
+    const belongsToCompany = this.#equipmentInformationSignal.value.some(
+        (equipment) =>
+            equipment.id === current.equipmentId &&
+            equipment.ownerUserId === userId,
     );
     if (!belongsToCompany) {
-      this.#errorState.value = 'Incident does not belong to this company';
+      this.#errorSignal.value = "Incident does not belong to this company";
       return;
     }
     let updated;
@@ -255,144 +301,133 @@ export class IncidentStore {
       });
       updated.requireRentalRestriction();
     } catch (error) {
-      this.#errorState.value = this.#formatError(error, 'Cannot update this incident');
+      this.#errorSignal.value = this.#formatError(
+          error,
+          "Cannot update this incident",
+      );
       return;
     }
-    this.#restrictingIncidentIdState.value = incidentId;
-    let equipmentWasChanged = false;
-    this.#equipmentOperation
-      .markAsMaintenance(userId, current.equipmentId)
-      .pipe(
-        tap((transition) => {
-          equipmentWasChanged = transition === 'CHANGED';
-        }),
-        switchMap(() => this.#incidentApi.requireRentalRestriction(updated)),
-        takeUntil(sessionEnded),
-      )
-      .subscribe({
-        next: (persisted) => {
-          this.#incidentsState.value = ((incidents) =>
-            incidents.map((incident) => (incident.id === persisted.id ? persisted : incident)))(
-            this.#incidentsState.value,
-          );
-          this.#markEquipmentInMaintenance(current.equipmentId);
-          this.#restrictingIncidentIdState.value = null;
-          this.#restrictionSucceededState.value = true;
-          this.#errorState.value = null;
-        },
-        error: (error) => {
-          this.#restrictingIncidentIdState.value = null;
-          this.#restrictionSucceededState.value = false;
-          const message = this.#formatError(error, 'Failed to update rental restriction');
-          this.#errorState.value = equipmentWasChanged
-            ? `${message}. Equipment is already in MAINTENANCE. Verify the incident before retrying.`
-            : message;
-        },
-      });
+    // The backend updates the incident and its operational restriction atomically.
+    this.#restrictingIncidentIdSignal.value = incidentId;
+    this.#incidentApi
+        .requireRentalRestriction(updated)
+        .pipe(takeUntil(sessionEnded))
+        .subscribe({
+          next: (persisted) => {
+            this.#incidentsSignal.value = ((incidents) =>
+                incidents.map((incident) =>
+                    incident.id === persisted.id ? persisted : incident,
+                ))(this.#incidentsSignal.value);
+            this.#markEquipmentInMaintenance(current.equipmentId);
+            this.#restrictingIncidentIdSignal.value = null;
+            this.#restrictionSucceededSignal.value = true;
+            this.#errorSignal.value = null;
+          },
+          error: (error) => {
+            this.#restrictingIncidentIdSignal.value = null;
+            this.#restrictionSucceededSignal.value = false;
+            this.#errorSignal.value = this.#formatError(
+                error,
+                "Failed to update rental restriction",
+            );
+          },
+        });
   }
+  // Explicit equipment reactivation after inspection and resolution of blocking incidents.
   reactivateEquipment(userId, equipmentId, inspectionConfirmed) {
     if (
-      this.#loadingState.value ||
-      this.#savingState.value ||
-      this.#resolvingIncidentIdState.value !== null ||
-      this.#restrictingIncidentIdState.value !== null ||
-      this.#reactivatingEquipmentIdState.value !== null
+        this.#loadingSignal.value ||
+        this.#savingSignal.value ||
+        this.#resolvingIncidentIdSignal.value !== null ||
+        this.#restrictingIncidentIdSignal.value !== null ||
+        this.#reactivatingEquipmentIdSignal.value !== null
     ) {
       return;
     }
     this.clearSaveState();
-    const equipment = this.#equipmentInformationState.value.find(
-      (item) => item.id === equipmentId && item.ownerUserId === userId,
+    const equipment = this.#equipmentInformationSignal.value.find(
+        (item) => item.id === equipmentId && item.ownerUserId === userId,
     );
     if (!inspectionConfirmed) {
-      this.#errorState.value = 'Confirm the technical inspection before reactivating equipment';
+      this.#errorSignal.value =
+          "Confirm the technical inspection before reactivating equipment";
       return;
     }
-    if (!equipment || equipment.status !== 'MAINTENANCE') {
-      this.#errorState.value = 'Only your equipment in MAINTENANCE can be reactivated';
+    if (!equipment || equipment.status !== "MAINTENANCE") {
+      this.#errorSignal.value =
+          "Only your equipment in MAINTENANCE can be reactivated";
       return;
     }
-    if (!IncidentReactivationPolicy.canReactivate(equipmentId, this.#incidentsState.value)) {
-      this.#errorState.value =
-        'There are unresolved blocking incidents or no blocking incident history';
+    if (
+        this.#incidentsSignal.value.some(
+            (incident) =>
+                incident.equipmentId === equipmentId &&
+                incident.blocksRental &&
+                incident.status === IncidentStatus.OPEN,
+        )
+    ) {
+      this.#errorSignal.value =
+          "Unresolved blocking incidents prevent reactivation";
       return;
     }
-    this.#reactivatingEquipmentIdState.value = equipmentId;
-    forkJoin({
-      incidents: this.#incidentApi.getIncidents(),
-      hasActiveRental: this.#rentalActivity.hasActiveRental(equipmentId),
-    })
-      .pipe(
-        switchMap(({ incidents, hasActiveRental }) => {
-          if (!IncidentReactivationPolicy.canReactivate(equipmentId, incidents)) {
-            return throwError(
-              () => new Error('New or unresolved blocking incidents prevent reactivation'),
+    this.#reactivatingEquipmentIdSignal.value = equipmentId;
+    // The server checks open incidents, active rentals, inspection confirmation,
+    // and maintenance transitions before reactivating Inventory.
+    this.#incidentApi
+        .reactivateEquipment(equipmentId, inspectionConfirmed)
+        .pipe(takeUntil(sessionEnded))
+        .subscribe({
+          next: () => {
+            this.#equipmentInformationSignal.value = ((items) =>
+                items.map((item) =>
+                    item.id === equipmentId ? { ...item, status: "AVAILABLE" } : item,
+                ))(this.#equipmentInformationSignal.value);
+            this.#reactivatingEquipmentIdSignal.value = null;
+            this.#reactivationSucceededSignal.value = true;
+            this.#errorSignal.value = null;
+          },
+          error: (error) => {
+            this.#reactivatingEquipmentIdSignal.value = null;
+            this.#reactivationSucceededSignal.value = false;
+            this.#errorSignal.value = this.#formatError(
+                error,
+                "Failed to reactivate equipment",
             );
-          }
-          if (hasActiveRental) {
-            return throwError(() => new Error('The equipment still has an active rental'));
-          }
-          return this.#equipmentOperation.reactivateEquipment(userId, equipmentId);
-        }),
-        takeUntil(sessionEnded),
-      )
-      .subscribe({
-        next: () => {
-          this.#equipmentInformationState.value = ((items) =>
-            items.map((item) =>
-              item.id === equipmentId
-                ? {
-                  ...item,
-                  status: 'AVAILABLE',
-                }
-                : item,
-            ))(this.#equipmentInformationState.value);
-          this.#reactivatingEquipmentIdState.value = null;
-          this.#reactivationSucceededState.value = true;
-          this.#errorState.value = null;
-        },
-        error: (error) => {
-          this.#reactivatingEquipmentIdState.value = null;
-          this.#reactivationSucceededState.value = false;
-          this.#errorState.value = this.#formatError(error, 'Failed to reactivate equipment');
-        },
-      });
+          },
+        });
   }
   getEquipmentInformation(equipmentId) {
-    return this.#equipmentInformationState.value.find((equipment) => equipment.id === equipmentId);
+    return this.#equipmentInformationSignal.value.find(
+        (equipment) => equipment.id === equipmentId,
+    );
   }
   clearSaveState() {
-    this.#reactivationSucceededState.value = false;
-    this.#saveSucceededState.value = false;
-    this.#resolveSucceededState.value = false;
-    this.#restrictionSucceededState.value = false;
-    this.#errorState.value = null;
+    this.#reactivationSucceededSignal.value = false;
+    this.#saveSucceededSignal.value = false;
+    this.#resolveSucceededSignal.value = false;
+    this.#restrictionSucceededSignal.value = false;
+    this.#errorSignal.value = null;
   }
   clear() {
     ++this.#loadVersion;
-    this.#incidentsState.value = [];
-    this.#equipmentInformationState.value = [];
-    this.#loadingState.value = false;
-    this.#savingState.value = false;
-    this.#saveSucceededState.value = false;
-    this.#resolvingIncidentIdState.value = null;
-    this.#resolveSucceededState.value = false;
-    this.#restrictingIncidentIdState.value = null;
-    this.#restrictionSucceededState.value = false;
-    this.#reactivatingEquipmentIdState.value = null;
-    this.#reactivationSucceededState.value = false;
-    this.#errorState.value = null;
+    this.#incidentsSignal.value = [];
+    this.#equipmentInformationSignal.value = [];
+    this.#loadingSignal.value = false;
+    this.#savingSignal.value = false;
+    this.#saveSucceededSignal.value = false;
+    this.#resolvingIncidentIdSignal.value = null;
+    this.#resolveSucceededSignal.value = false;
+    this.#restrictingIncidentIdSignal.value = null;
+    this.#restrictionSucceededSignal.value = false;
+    this.#reactivatingEquipmentIdSignal.value = null;
+    this.#reactivationSucceededSignal.value = false;
+    this.#errorSignal.value = null;
   }
   #markEquipmentInMaintenance(equipmentId) {
-    this.#equipmentInformationState.value = ((items) =>
-      items.map((item) =>
-        item.id === equipmentId
-          ? {
-            ...item,
-            status: 'MAINTENANCE',
-          }
-          : item,
-      ))(this.#equipmentInformationState.value);
+    this.#equipmentInformationSignal.value = ((items) =>
+        items.map((item) =>
+            item.id === equipmentId ? { ...item, status: "MAINTENANCE" } : item,
+        ))(this.#equipmentInformationSignal.value);
   }
   #formatError(error, fallbackMessage) {
     if (error instanceof Error && error.message) {
@@ -402,5 +437,7 @@ export class IncidentStore {
   }
 }
 
-export const useIncidentStore = defineStore("incident", () => exposeStore(new IncidentStore()));
+export const useIncidentStore = defineStore("incident", () =>
+    exposeStore(new IncidentStore()),
+);
 registerStore(IncidentStore, useIncidentStore);

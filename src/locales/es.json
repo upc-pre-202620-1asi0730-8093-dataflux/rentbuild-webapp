@@ -278,7 +278,8 @@
         "no-current": "No hay una suscripción vigente para cambiar. Recarga y selecciona un plan.",
         "same-plan": "Este ya es tu plan vigente.",
         "invalid-data": "No se pudo verificar la respuesta de demo. Recarga antes de reintentar.",
-        "fallback": "No se pudo completar la solicitud de demo. Reintenta."
+        "fallback": "No se pudo completar la solicitud de demo. Reintenta.",
+        "cancel": "No se pudo confirmar la cancelación. Recarga tu suscripción antes de reintentar."
       },
       "retry": "Reintentar carga de planes",
       "manage-subscription": "Gestionar suscripción",

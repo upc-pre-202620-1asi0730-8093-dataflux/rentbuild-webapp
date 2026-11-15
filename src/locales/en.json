@@ -278,7 +278,8 @@
         "no-current": "There is no current subscription to change. Reload and select a plan.",
         "same-plan": "This is already your current plan.",
         "invalid-data": "Could not verify the demo response. Reload before trying again.",
-        "fallback": "The demo request could not be completed. Try again."
+        "fallback": "The demo request could not be completed. Try again.",
+        "cancel": "Cancellation could not be confirmed. Reload your subscription before trying again."
       },
       "retry": "Retry loading plans",
       "manage-subscription": "Manage subscription",
