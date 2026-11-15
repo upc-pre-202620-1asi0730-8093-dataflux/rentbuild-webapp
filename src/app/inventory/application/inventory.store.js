@@ -1,12 +1,15 @@
 import { defineStore } from "pinia";
-import { registerStore, exposeStore } from "../../shared/infrastructure/services.js";
-import { resolve, sessionEnded } from '../../shared/infrastructure/services.js';
-import { shallowRef, shallowReadonly, computed } from 'vue';
-import { takeUntil } from 'rxjs';
-import { EMPTY, forkJoin, map, retry, switchMap, tap } from 'rxjs';
+import {
+    registerStore,
+    exposeStore,
+} from "../../shared/infrastructure/services.js";
+import { resolve, sessionEnded } from "../../shared/infrastructure/services.js";
+import { shallowRef, shallowReadonly, computed } from "vue";
+import { takeUntil } from "rxjs";
+import { EMPTY, forkJoin, map, retry, switchMap, tap } from "rxjs";
 
-import { InventoryApi } from '../infrastructure/inventory-api.js';
-import { INVENTORY_ACCESS_PORT } from '../infrastructure/inventory-access.port.js';
+import { InventoryApi } from "../infrastructure/inventory-api.js";
+import { INVENTORY_ACCESS_PORT } from "../infrastructure/inventory-access.port.js";
 export class InventoryStore {
     #inventoryApi = resolve(InventoryApi);
     #inventoryAccess = resolve(INVENTORY_ACCESS_PORT);
@@ -42,19 +45,23 @@ export class InventoryStore {
     }
     getCategoryById(id) {
         return computed(() =>
-            id ? this.categories.value.find((category) => category.id === id) : undefined,
+            id
+                ? this.categories.value.find((category) => category.id === id)
+                : undefined,
         );
     }
     getEquipmentById(id) {
         return computed(() =>
-            id ? this.equipment.value.find((equipment) => equipment.id === id) : undefined,
+            id
+                ? this.equipment.value.find((equipment) => equipment.id === id)
+                : undefined,
         );
     }
     getEquipmentForEdit(id, ownerUserId) {
         return this.#inventoryApi.getEquipmentById(id).pipe(
             map((equipment) => {
                 if (equipment.userId !== ownerUserId) {
-                    throw new Error('Equipment does not belong to the current company');
+                    throw new Error("Equipment does not belong to the current company");
                 }
                 return equipment;
             }),
@@ -64,7 +71,7 @@ export class InventoryStore {
     verifyEquipmentAvailability(id, period) {
         return this.#inventoryApi.getEquipmentById(id).pipe(
             tap((equipment) => this.#upsertEquipment(equipment)),
-            map((equipment) => equipment.isAvailableFor(period)),
+            switchMap(() => this.#inventoryApi.getEquipmentAvailability(id, period)),
         );
     }
     #upsertEquipment(equipment) {
@@ -110,7 +117,7 @@ export class InventoryStore {
                     this.#equipmentState.value = [];
                     this.#errorState.value = this.#formatError(
                         err,
-                        'Failed to synchronize marketplace equipment',
+                        "Failed to synchronize marketplace equipment",
                     );
                     if (!background) this.#finishOperation();
                 },
@@ -136,7 +143,9 @@ export class InventoryStore {
                         );
                         if (exists) {
                             return equipmentCollection.map((currentEquipment) =>
-                                currentEquipment.id === equipment.id ? equipment : currentEquipment,
+                                currentEquipment.id === equipment.id
+                                    ? equipment
+                                    : currentEquipment,
                             );
                         }
                         return [...equipmentCollection, equipment];
@@ -149,7 +158,10 @@ export class InventoryStore {
                         this.#finishOperation();
                         return;
                     }
-                    this.#errorState.value = this.#formatError(err, 'Failed to load equipment');
+                    this.#errorState.value = this.#formatError(
+                        err,
+                        "Failed to load equipment",
+                    );
                     this.#finishOperation();
                 },
             });
@@ -177,7 +189,10 @@ export class InventoryStore {
                         this.#finishOperation();
                         return;
                     }
-                    this.#errorState.value = this.#formatError(err, 'Failed to load equipment');
+                    this.#errorState.value = this.#formatError(
+                        err,
+                        "Failed to load equipment",
+                    );
                     this.#finishOperation();
                 },
             });
@@ -210,7 +225,10 @@ export class InventoryStore {
                     this.#saveSucceededState.value = true;
                 },
                 error: (err) => {
-                    this.#errorState.value = this.#formatError(err, 'Failed to create equipment');
+                    this.#errorState.value = this.#formatError(
+                        err,
+                        "Failed to create equipment",
+                    );
                     this.#finishOperation();
                     this.#saveSucceededState.value = false;
                 },
@@ -236,7 +254,9 @@ export class InventoryStore {
                     updatedEquipment = this.#assignCategoryToEquipment(updatedEquipment);
                     this.#equipmentState.value = ((equipmentCollection) =>
                         equipmentCollection.map((currentEquipment) =>
-                            currentEquipment.id === updatedEquipment.id ? updatedEquipment : currentEquipment,
+                            currentEquipment.id === updatedEquipment.id
+                                ? updatedEquipment
+                                : currentEquipment,
                         ))(this.#equipmentState.value);
                     this.#finishOperation();
                     this.#errorState.value = null;
@@ -244,7 +264,10 @@ export class InventoryStore {
                     this.#saveSucceededState.value = true;
                 },
                 error: (err) => {
-                    this.#errorState.value = this.#formatError(err, 'Failed to update equipment');
+                    this.#errorState.value = this.#formatError(
+                        err,
+                        "Failed to update equipment",
+                    );
                     this.#finishOperation();
                     this.#saveSucceededState.value = false;
                 },
@@ -285,25 +308,30 @@ export class InventoryStore {
                     this.#assignCategoriesToEquipment();
                 },
                 error: (err) => {
-                    this.#errorState.value = this.#formatError(err, 'Failed to load equipment categories');
+                    this.#errorState.value = this.#formatError(
+                        err,
+                        "Failed to load equipment categories",
+                    );
                     this.#finishOperation();
                 },
             });
     }
     #assignCategoriesToEquipment() {
         this.#equipmentState.value = ((equipmentCollection) =>
-            equipmentCollection.map((equipment) => this.#assignCategoryToEquipment(equipment)))(
-            this.#equipmentState.value,
-        );
+            equipmentCollection.map((equipment) =>
+                this.#assignCategoryToEquipment(equipment),
+            ))(this.#equipmentState.value);
     }
     #assignCategoryToEquipment(equipment) {
         const categoryId = equipment.categoryId ?? 0;
-        equipment.category = categoryId ? (this.getCategoryById(categoryId).value ?? null) : null;
+        equipment.category = categoryId
+            ? (this.getCategoryById(categoryId).value ?? null)
+            : null;
         return equipment;
     }
     #formatError(error, fallback) {
         if (error instanceof Error) {
-            return error.message.includes('Resource not found')
+            return error.message.includes("Resource not found")
                 ? `${fallback}: Not found`
                 : error.message;
         }
@@ -311,5 +339,7 @@ export class InventoryStore {
     }
 }
 
-export const useInventoryStore = defineStore("inventory", () => exposeStore(new InventoryStore()));
+export const useInventoryStore = defineStore("inventory", () =>
+    exposeStore(new InventoryStore()),
+);
 registerStore(InventoryStore, useInventoryStore);

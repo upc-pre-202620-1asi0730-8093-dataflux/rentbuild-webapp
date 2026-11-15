@@ -3,9 +3,14 @@ import { Equipment } from "../domain/model/equipment.entity.js";
 import { AvailabilityBlock } from "../domain/model/availability-block.entity.js";
 import { RentalRate } from "../domain/value-object/rental-rate.value-object.js";
 export class EquipmentAssembler {
+  #calendarDateFromApi(value, endOfDay = false) {
+    const day = value.slice(0, 10);
+    return new Date(`${day}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}`);
+  }
+
   toEntitiesFromResponse(response) {
     return response.equipments.map((resource) =>
-      this.toEntityFromResource(resource),
+        this.toEntityFromResource(resource),
     );
   }
   toEntityFromResource(resource) {
@@ -24,7 +29,7 @@ export class EquipmentAssembler {
       }),
       status: resource.status,
       availabilityBlocks: (resource.availabilityBlocks ?? []).map((block) =>
-        this.#toAvailabilityBlock(block),
+          this.#toAvailabilityBlock(block),
       ),
     });
   }
@@ -42,7 +47,7 @@ export class EquipmentAssembler {
       currency: entity.rentalRate.currency,
       status: entity.status,
       availabilityBlocks: entity.availabilityBlocks.map((block) =>
-        this.#toAvailabilityBlockResource(block),
+          this.#toAvailabilityBlockResource(block),
       ),
     };
   }
@@ -50,8 +55,8 @@ export class EquipmentAssembler {
     return new AvailabilityBlock({
       id: resource.id,
       period: new DateRange({
-        startDate: new Date(resource.startDate),
-        endDate: new Date(resource.endDate),
+        startDate: this.#calendarDateFromApi(resource.startDate),
+        endDate: this.#calendarDateFromApi(resource.endDate, true),
       }),
     });
   }

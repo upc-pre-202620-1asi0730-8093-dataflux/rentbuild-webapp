@@ -1,3 +1,4 @@
+import { EquipmentHistoryStore } from "./maintenance/application/equipment-history.store.js";
 import { configure as configureIam } from "./iam/application/iam.module.js";
 import {
   register,
@@ -80,6 +81,7 @@ export function useServices() {
     subscriptions: resolve(SubscriptionsStore),
     maintenance: resolve(MaintenanceStore),
     incidents: resolve(IncidentStore),
+    equipmentHistory: resolve(EquipmentHistoryStore),
   };
 }
 export function clearSessionData() {
@@ -93,4 +95,5 @@ export function clearSessionData() {
   s.subscriptions.clear();
   s.maintenance.clear();
   s.incidents.clear();
+  s.equipmentHistory.clear();
 }

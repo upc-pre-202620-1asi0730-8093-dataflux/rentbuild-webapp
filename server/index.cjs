@@ -76,7 +76,7 @@ server.post("/api/v1/authentication/sign-up", (req, res) => {
     .status(201)
     .json({ ...user, password: undefined, firstName, lastName, companyName });
 });
-require("./subscription-cancellation.cjs")(server, router.db);
+require("./migration-routes.cjs")(server, router.db);
 server.use(jsonServer.rewriter(require("./routes.json")));
 server.use(router);
 server.listen(Number(process.env.PORT || 3000), "127.0.0.1", () =>

@@ -1,32 +1,116 @@
+import { RentalLifecycleDatePolicy } from "../domain/policy/rental-lifecycle-date.policy.js";
 import { defineStore } from "pinia";
-import { registerStore, exposeStore } from "../../shared/infrastructure/services.js";
-import { resolve, sessionEnded } from '../../shared/infrastructure/services.js';
-import { shallowRef, shallowReadonly, computed } from 'vue';
-import { takeUntil } from 'rxjs';
-import { EMPTY, forkJoin, map, of, switchMap } from 'rxjs';
-import { Delivery } from '../domain/model/delivery.entity.js';
-import { EquipmentReturn } from '../domain/model/equipment-return.entity.js';
-import { Rental } from '../domain/model/rental.entity.js';
-import { RentalRequest } from '../domain/model/rental-request.entity.js';
-import { RentalRequestStatus } from '../domain/model/rental-request-status.enum.js';
-import { RentalStatus } from '../domain/model/rental-status.enum.js';
-import { RentalsApi } from '../infrastructure/rentals-api.js';
-import { EQUIPMENT_INFORMATION_PORT } from '../infrastructure/equipment-information.port.js';
-import { EQUIPMENT_OPERATION_PORT } from '../infrastructure/equipment-operation.port.js';
-import { PARTICIPANT_INFORMATION_PORT } from '../infrastructure/participant-information.port.js';
-import { SUBSCRIPTION_ACCESS_PORT } from '../infrastructure/subscription-access.port.js';
-import { RentalRequestEligibilityPolicy } from '../domain/policy/rental-request-eligibility.policy.js';
-import { EQUIPMENT_REQUEST_AVAILABILITY_PORT } from '../infrastructure/equipment-request-availability.port.js';
-import { MAINTENANCE_INCIDENT_RESTRICTION_PORT } from '../infrastructure/maintenance-incident-restriction.port.js';
-import { RENTAL_REQUESTER_ACCESS_PORT } from '../infrastructure/rental-requester-access.port.js';
+import {
+  registerStore,
+  exposeStore,
+} from "../../shared/infrastructure/services.js";
+import { resolve, sessionEnded } from "../../shared/infrastructure/services.js";
+import { shallowRef, shallowReadonly, computed } from "vue";
+import { takeUntil } from "rxjs";
+import { EMPTY, forkJoin, map, of, switchMap } from "rxjs";
+import { Delivery } from "../domain/model/delivery.entity.js";
+import { EquipmentReturn } from "../domain/model/equipment-return.entity.js";
+import { Rental } from "../domain/model/rental.entity.js";
+import { RentalRequest } from "../domain/model/rental-request.entity.js";
+import { RentalRequestStatus } from "../domain/model/rental-request-status.enum.js";
+import { RentalStatus } from "../domain/model/rental-status.enum.js";
+import { RentalsApi } from "../infrastructure/rentals-api.js";
+import { EQUIPMENT_INFORMATION_PORT } from "../infrastructure/equipment-information.port.js";
+import { EQUIPMENT_OPERATION_PORT } from "../infrastructure/equipment-operation.port.js";
+import { PARTICIPANT_INFORMATION_PORT } from "../infrastructure/participant-information.port.js";
+import { SUBSCRIPTION_ACCESS_PORT } from "../infrastructure/subscription-access.port.js";
+import { RentalRequestEligibilityPolicy } from "../domain/policy/rental-request-eligibility.policy.js";
+import { EQUIPMENT_REQUEST_AVAILABILITY_PORT } from "../infrastructure/equipment-request-availability.port.js";
+import { MAINTENANCE_INCIDENT_RESTRICTION_PORT } from "../infrastructure/maintenance-incident-restriction.port.js";
+import { RENTAL_REQUESTER_ACCESS_PORT } from "../infrastructure/rental-requester-access.port.js";
 export class RentalsStore {
+  reschedulePendingRentalRequest(requestId, constructionUserId, period) {
+    if (this.#reschedulingRequestIdSignal.value !== null) return;
+    this.clearReschedulingFeedback();
+    const currentRequest = this.selectedRentalRequest.value;
+    if (!currentRequest || currentRequest.id !== requestId) {
+      this.#reschedulingErrorSignal.value = "NOT_FOUND";
+      return;
+    }
+    if (
+        currentRequest.constructionUserId !== constructionUserId ||
+        !this.#requesterAccess.canSubmitRentalRequest(constructionUserId)
+    ) {
+      this.#reschedulingErrorSignal.value = "FORBIDDEN";
+      return;
+    }
+    if (!currentRequest.isPending) {
+      this.#reschedulingErrorSignal.value = "CONFLICT";
+      return;
+    }
+    const readVersion = this.#readRequestVersion;
+    this.#reschedulingRequestIdSignal.value = requestId;
+    // The backend validates dates and Inventory availability again inside its transaction.
+    this.#rentalsApi
+        .reschedulePendingRentalRequest(requestId, period)
+        .pipe(takeUntil(sessionEnded))
+        .subscribe({
+          next: (savedRequest) => {
+            if (readVersion !== this.#readRequestVersion) return;
+            this.#reschedulingRequestIdSignal.value = null;
+            if (
+                savedRequest.id !== requestId ||
+                savedRequest.constructionUserId !== constructionUserId
+            ) {
+              this.#reschedulingErrorSignal.value = "UNKNOWN";
+              return;
+            }
+            this.#selectedRentalRequestState.value = savedRequest;
+            this.#rentalRequestsState.value = ((requests) =>
+                requests.map((request) =>
+                    request.id === requestId ? savedRequest : request,
+                ))(this.#rentalRequestsState.value);
+            this.#reschedulingSucceededSignal.value = true;
+          },
+          error: (error) => {
+            if (readVersion !== this.#readRequestVersion) return;
+            this.#reschedulingRequestIdSignal.value = null;
+            const status = typeof error?.status === "number" ? error.status : -1;
+            const code =
+                status === 409
+                    ? "CONFLICT"
+                    : status === 403
+                        ? "FORBIDDEN"
+                        : status === 404
+                            ? "NOT_FOUND"
+                            : status === 400 || status === 422
+                                ? "INVALID"
+                                : status === 0
+                                    ? "NETWORK"
+                                    : "UNKNOWN";
+            this.#reschedulingErrorSignal.value = code;
+          },
+        });
+  }
+
+  clearReschedulingFeedback() {
+    this.#reschedulingErrorSignal.value = null;
+    this.#reschedulingSucceededSignal.value = false;
+  }
+
+  #reschedulingSucceededSignal = shallowRef(false);
+  reschedulingSucceeded = shallowReadonly(this.#reschedulingSucceededSignal);
+
+  #reschedulingErrorSignal = shallowRef(null);
+  reschedulingError = shallowReadonly(this.#reschedulingErrorSignal);
+
+  #reschedulingRequestIdSignal = shallowRef(null);
+  reschedulingRequestId = shallowReadonly(this.#reschedulingRequestIdSignal);
+
   #rentalsApi = resolve(RentalsApi);
   #requesterAccess = resolve(RENTAL_REQUESTER_ACCESS_PORT);
   #subscriptionAccess = resolve(SUBSCRIPTION_ACCESS_PORT);
   #equipmentInformation = resolve(EQUIPMENT_INFORMATION_PORT);
   #equipmentOperation = resolve(EQUIPMENT_OPERATION_PORT);
   #equipmentRequestAvailability = resolve(EQUIPMENT_REQUEST_AVAILABILITY_PORT);
-  #maintenanceIncidentRestriction = resolve(MAINTENANCE_INCIDENT_RESTRICTION_PORT);
+  #maintenanceIncidentRestriction = resolve(
+      MAINTENANCE_INCIDENT_RESTRICTION_PORT,
+  );
   #participantInformation = resolve(PARTICIPANT_INFORMATION_PORT);
   #readRequestVersion = 0;
   #rentalRequestsState = shallowRef([]);
@@ -40,39 +124,47 @@ export class RentalsStore {
   #equipmentInformationState = shallowRef(new Map());
   #participantInformationState = shallowRef(new Map());
   pendingRequestCount = computed(
-    () =>
-      this.rentalRequests.value.filter((request) => request.status === RentalRequestStatus.PENDING)
-        .length,
+      () =>
+          this.rentalRequests.value.filter(
+              (request) => request.status === RentalRequestStatus.PENDING,
+          ).length,
   );
   approvedRequestCount = computed(
-    () =>
-      this.rentalRequests.value.filter((request) => request.status === RentalRequestStatus.APPROVED)
-        .length,
+      () =>
+          this.rentalRequests.value.filter(
+              (request) => request.status === RentalRequestStatus.APPROVED,
+          ).length,
   );
   rejectedRequestCount = computed(
-    () =>
-      this.rentalRequests.value.filter((request) => request.status === RentalRequestStatus.REJECTED)
-        .length,
+      () =>
+          this.rentalRequests.value.filter(
+              (request) => request.status === RentalRequestStatus.REJECTED,
+          ).length,
   );
   confirmedRentalCount = computed(
-    () => this.rentals.value.filter((rental) => rental.isConfirmed).length,
+      () => this.rentals.value.filter((rental) => rental.isConfirmed).length,
   );
-  activeRentalCount = computed(() => this.rentals.value.filter((rental) => rental.isActive).length);
+  activeRentalCount = computed(
+      () => this.rentals.value.filter((rental) => rental.isActive).length,
+  );
   upcomingReturnCount = computed(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const limit = new Date(today);
     limit.setDate(limit.getDate() + 7);
     return this.rentals.value.filter(
-      (rental) =>
-        rental.isActive && rental.period.endDate >= today && rental.period.endDate <= limit,
+        (rental) =>
+            rental.isActive &&
+            rental.period.endDate >= today &&
+            rental.period.endDate <= limit,
     ).length;
   });
   overdueRentalCount = computed(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    return this.rentals.value.filter((rental) => rental.isActive && rental.period.endDate < today)
-      .length;
+    return this.rentals.value.filter(
+        (rental) => rental.isActive && rental.period.endDate < today,
+    ).length;
   });
   #latestCreatedRequestState = shallowRef(null);
   latestCreatedRequest = shallowReadonly(this.#latestCreatedRequestState);
@@ -96,114 +188,139 @@ export class RentalsStore {
     this.#loadingState.value = true;
     this.#errorState.value = null;
     this.#rentalsApi
-      .getRentalRequests()
-      .pipe(
-        map((requests) =>
-          requests
-            .filter((request) => request.rentalCompanyUserId === rentalCompanyUserId)
-            .sort(
-              (firstRequest, secondRequest) =>
-                secondRequest.createdAt.getTime() - firstRequest.createdAt.getTime(),
+        .getRentalRequests()
+        .pipe(
+            map((requests) =>
+                requests
+                    .filter(
+                        (request) => request.rentalCompanyUserId === rentalCompanyUserId,
+                    )
+                    .sort(
+                        (firstRequest, secondRequest) =>
+                            secondRequest.createdAt.getTime() -
+                            firstRequest.createdAt.getTime(),
+                    ),
             ),
-        ),
-        switchMap((requests) => {
-          if (requests.length === 0) {
-            return of({
-              requests,
-              equipmentInformation: [],
-              participantInformation: [],
-            });
-          }
-          const equipmentIds = Array.from(new Set(requests.map((request) => request.equipmentId)));
-          const participantUserIds = Array.from(
-            new Set(requests.map((request) => request.constructionUserId)),
-          );
-          return forkJoin({
-            equipmentInformation:
-              this.#equipmentInformation.getEquipmentInformationByIds(equipmentIds),
-            participantInformation:
-              this.#participantInformation.getParticipantInformationByUserIds(participantUserIds),
-          }).pipe(
-            map(({ equipmentInformation, participantInformation }) => ({
-              requests,
-              equipmentInformation,
-              participantInformation,
-            })),
-          );
-        }),
-        takeUntil(sessionEnded),
-      )
-      .subscribe({
-        next: ({ requests, equipmentInformation, participantInformation }) => {
-          if (readVersion !== this.#readRequestVersion) return;
-          this.#rentalRequestsState.value = requests;
-          this.#equipmentInformationState.value = new Map(
-            equipmentInformation.map((equipment) => [equipment.id, equipment]),
-          );
-          this.#participantInformationState.value = new Map(
-            participantInformation.map((participant) => [participant.userId, participant]),
-          );
-          this.#loadingState.value = false;
-          this.#errorState.value = null;
-        },
-        error: (error) => {
-          if (readVersion !== this.#readRequestVersion) return;
-          this.clearRentalRequests();
-          this.#errorState.value = this.#formatError(error, 'Failed to load rental requests');
-          this.#loadingState.value = false;
-        },
-      });
+            switchMap((requests) => {
+              if (requests.length === 0) {
+                return of({
+                  requests,
+                  equipmentInformation: [],
+                  participantInformation: [],
+                });
+              }
+              const equipmentIds = Array.from(
+                  new Set(requests.map((request) => request.equipmentId)),
+              );
+              const participantUserIds = Array.from(
+                  new Set(requests.map((request) => request.constructionUserId)),
+              );
+              return forkJoin({
+                equipmentInformation:
+                    this.#equipmentInformation.getEquipmentInformationByIds(
+                        equipmentIds,
+                    ),
+                participantInformation:
+                    this.#participantInformation.getParticipantInformationByUserIds(
+                        participantUserIds,
+                    ),
+              }).pipe(
+                  map(({ equipmentInformation, participantInformation }) => ({
+                    requests,
+                    equipmentInformation,
+                    participantInformation,
+                  })),
+              );
+            }),
+            takeUntil(sessionEnded),
+        )
+        .subscribe({
+          next: ({ requests, equipmentInformation, participantInformation }) => {
+            if (readVersion !== this.#readRequestVersion) return;
+            this.#rentalRequestsState.value = requests;
+            this.#equipmentInformationState.value = new Map(
+                equipmentInformation.map((equipment) => [equipment.id, equipment]),
+            );
+            this.#participantInformationState.value = new Map(
+                participantInformation.map((participant) => [
+                  participant.userId,
+                  participant,
+                ]),
+            );
+            this.#loadingState.value = false;
+            this.#errorState.value = null;
+          },
+          error: (error) => {
+            if (readVersion !== this.#readRequestVersion) return;
+            this.clearRentalRequests();
+            this.#errorState.value = this.#formatError(
+                error,
+                "Failed to load rental requests",
+            );
+            this.#loadingState.value = false;
+          },
+        });
   }
   loadRentalRequestsForConstructionCompany(constructionUserId) {
     const readVersion = ++this.#readRequestVersion;
     this.#loadingState.value = true;
     this.#errorState.value = null;
     this.#rentalsApi
-      .getRentalRequests()
-      .pipe(
-        map((requests) =>
-          requests
-            .filter((request) => request.constructionUserId === constructionUserId)
-            .sort(
-              (firstRequest, secondRequest) =>
-                secondRequest.createdAt.getTime() - firstRequest.createdAt.getTime(),
+        .getRentalRequests()
+        .pipe(
+            map((requests) =>
+                requests
+                    .filter(
+                        (request) => request.constructionUserId === constructionUserId,
+                    )
+                    .sort(
+                        (firstRequest, secondRequest) =>
+                            secondRequest.createdAt.getTime() -
+                            firstRequest.createdAt.getTime(),
+                    ),
             ),
-        ),
-        switchMap((requests) => {
-          if (requests.length === 0) {
-            return of({
-              requests,
-              equipmentInformation: [],
-            });
-          }
-          const equipmentIds = Array.from(new Set(requests.map((request) => request.equipmentId)));
-          return this.#equipmentInformation.getEquipmentInformationByIds(equipmentIds).pipe(
-            map((equipmentInformation) => ({
-              requests,
-              equipmentInformation,
-            })),
-          );
-        }),
-        takeUntil(sessionEnded),
-      )
-      .subscribe({
-        next: ({ requests, equipmentInformation }) => {
-          if (readVersion !== this.#readRequestVersion) return;
-          this.#rentalRequestsState.value = requests;
-          this.#equipmentInformationState.value = new Map(
-            equipmentInformation.map((equipment) => [equipment.id, equipment]),
-          );
-          this.#participantInformationState.value = new Map();
-          this.#loadingState.value = false;
-          this.#errorState.value = null;
-        },
-        error: (error) => {
-          if (readVersion !== this.#readRequestVersion) return;
-          this.clearRentalRequests();
-          this.#errorState.value = this.#formatError(error, 'Failed to load my rental requests');
-          this.#loadingState.value = false;
-        },
-      });
+            switchMap((requests) => {
+              if (requests.length === 0) {
+                return of({
+                  requests,
+                  equipmentInformation: [],
+                });
+              }
+              const equipmentIds = Array.from(
+                  new Set(requests.map((request) => request.equipmentId)),
+              );
+              return this.#equipmentInformation
+                  .getEquipmentInformationByIds(equipmentIds)
+                  .pipe(
+                      map((equipmentInformation) => ({
+                        requests,
+                        equipmentInformation,
+                      })),
+                  );
+            }),
+            takeUntil(sessionEnded),
+        )
+        .subscribe({
+          next: ({ requests, equipmentInformation }) => {
+            if (readVersion !== this.#readRequestVersion) return;
+            this.#rentalRequestsState.value = requests;
+            this.#equipmentInformationState.value = new Map(
+                equipmentInformation.map((equipment) => [equipment.id, equipment]),
+            );
+            this.#participantInformationState.value = new Map();
+            this.#loadingState.value = false;
+            this.#errorState.value = null;
+          },
+          error: (error) => {
+            if (readVersion !== this.#readRequestVersion) return;
+            this.clearRentalRequests();
+            this.#errorState.value = this.#formatError(
+                error,
+                "Failed to load my rental requests",
+            );
+            this.#loadingState.value = false;
+          },
+        });
   }
   loadRentalRequestDetail(requestId, constructionUserId) {
     const readVersion = ++this.#readRequestVersion;
@@ -212,59 +329,62 @@ export class RentalsStore {
     this.#rentalRequestNotFoundState.value = false;
     this.#selectedRentalRequestState.value = null;
     this.#rentalsApi
-      .getRentalRequest(requestId)
-      .pipe(
-        switchMap((request) => {
-          if (request.constructionUserId !== constructionUserId) {
-            return of({
-              request: null,
-              equipmentInformation: [],
-            });
-          }
-          return this.#equipmentInformation
-            .getEquipmentInformationByIds([request.equipmentId])
-            .pipe(
-              map((equipmentInformation) => ({
-                request: request,
-                equipmentInformation,
-              })),
+        .getRentalRequest(requestId)
+        .pipe(
+            switchMap((request) => {
+              if (request.constructionUserId !== constructionUserId) {
+                return of({
+                  request: null,
+                  equipmentInformation: [],
+                });
+              }
+              return this.#equipmentInformation
+                  .getEquipmentInformationByIds([request.equipmentId])
+                  .pipe(
+                      map((equipmentInformation) => ({
+                        request: request,
+                        equipmentInformation,
+                      })),
+                  );
+            }),
+            takeUntil(sessionEnded),
+        )
+        .subscribe({
+          next: ({ request, equipmentInformation }) => {
+            if (readVersion !== this.#readRequestVersion) return;
+            if (!request) {
+              this.#selectedRentalRequestState.value = null;
+              this.#equipmentInformationState.value = new Map();
+              this.#rentalRequestNotFoundState.value = true;
+              this.#loadingState.value = false;
+              return;
+            }
+            this.#selectedRentalRequestState.value = request;
+            this.#equipmentInformationState.value = new Map(
+                equipmentInformation.map((equipment) => [equipment.id, equipment]),
             );
-        }),
-        takeUntil(sessionEnded),
-      )
-      .subscribe({
-        next: ({ request, equipmentInformation }) => {
-          if (readVersion !== this.#readRequestVersion) return;
-          if (!request) {
+            this.#rentalRequestNotFoundState.value = false;
+            this.#loadingState.value = false;
+            this.#errorState.value = null;
+          },
+          error: (error) => {
+            if (readVersion !== this.#readRequestVersion) return;
             this.#selectedRentalRequestState.value = null;
             this.#equipmentInformationState.value = new Map();
-            this.#rentalRequestNotFoundState.value = true;
+            const message = this.#formatError(
+                error,
+                "Failed to load rental request",
+            );
+            if (message.includes("Resource not found")) {
+              this.#rentalRequestNotFoundState.value = true;
+              this.#errorState.value = null;
+            } else {
+              this.#rentalRequestNotFoundState.value = false;
+              this.#errorState.value = message;
+            }
             this.#loadingState.value = false;
-            return;
-          }
-          this.#selectedRentalRequestState.value = request;
-          this.#equipmentInformationState.value = new Map(
-            equipmentInformation.map((equipment) => [equipment.id, equipment]),
-          );
-          this.#rentalRequestNotFoundState.value = false;
-          this.#loadingState.value = false;
-          this.#errorState.value = null;
-        },
-        error: (error) => {
-          if (readVersion !== this.#readRequestVersion) return;
-          this.#selectedRentalRequestState.value = null;
-          this.#equipmentInformationState.value = new Map();
-          const message = this.#formatError(error, 'Failed to load rental request');
-          if (message.includes('Resource not found')) {
-            this.#rentalRequestNotFoundState.value = true;
-            this.#errorState.value = null;
-          } else {
-            this.#rentalRequestNotFoundState.value = false;
-            this.#errorState.value = message;
-          }
-          this.#loadingState.value = false;
-        },
-      });
+          },
+        });
   }
   loadActiveRentalsForCompany(rentalCompanyUserId) {
     const readVersion = ++this.#readRequestVersion;
@@ -272,67 +392,80 @@ export class RentalsStore {
     this.#errorState.value = null;
     this.#operationSuccessState.value = null;
     this.#rentalsApi
-      .getRentals()
-      .pipe(
-        map((rentals) =>
-          rentals
-            .filter(
-              (rental) =>
-                rental.rentalCompanyUserId === rentalCompanyUserId &&
-                (rental.isConfirmed || rental.isActive),
-            )
-            .sort(
-              (firstRental, secondRental) =>
-                firstRental.period.endDate.getTime() - secondRental.period.endDate.getTime(),
+        .getRentals()
+        .pipe(
+            map((rentals) =>
+                rentals
+                    .filter(
+                        (rental) =>
+                            rental.rentalCompanyUserId === rentalCompanyUserId &&
+                            (rental.isConfirmed || rental.isActive),
+                    )
+                    .sort(
+                        (firstRental, secondRental) =>
+                            firstRental.period.endDate.getTime() -
+                            secondRental.period.endDate.getTime(),
+                    ),
             ),
-        ),
-        switchMap((rentals) => {
-          if (rentals.length === 0) {
-            return of({
-              rentals,
-              equipmentInformation: [],
-              participantInformation: [],
-            });
-          }
-          const equipmentIds = Array.from(new Set(rentals.map((rental) => rental.equipmentId)));
-          const participantUserIds = Array.from(
-            new Set(rentals.map((rental) => rental.constructionUserId)),
-          );
-          return forkJoin({
-            equipmentInformation:
-              this.#equipmentInformation.getEquipmentInformationByIds(equipmentIds),
-            participantInformation:
-              this.#participantInformation.getParticipantInformationByUserIds(participantUserIds),
-          }).pipe(
-            map(({ equipmentInformation, participantInformation }) => ({
-              rentals,
-              equipmentInformation,
-              participantInformation,
-            })),
-          );
-        }),
-        takeUntil(sessionEnded),
-      )
-      .subscribe({
-        next: ({ rentals, equipmentInformation, participantInformation }) => {
-          if (readVersion !== this.#readRequestVersion) return;
-          this.#rentalsState.value = rentals;
-          this.#equipmentInformationState.value = new Map(
-            equipmentInformation.map((equipment) => [equipment.id, equipment]),
-          );
-          this.#participantInformationState.value = new Map(
-            participantInformation.map((participant) => [participant.userId, participant]),
-          );
-          this.#loadingState.value = false;
-          this.#errorState.value = null;
-        },
-        error: (error) => {
-          if (readVersion !== this.#readRequestVersion) return;
-          this.clearRentals();
-          this.#errorState.value = this.#formatError(error, 'Failed to load rentals');
-          this.#loadingState.value = false;
-        },
-      });
+            switchMap((rentals) => {
+              if (rentals.length === 0) {
+                return of({
+                  rentals,
+                  equipmentInformation: [],
+                  participantInformation: [],
+                });
+              }
+              const equipmentIds = Array.from(
+                  new Set(rentals.map((rental) => rental.equipmentId)),
+              );
+              const participantUserIds = Array.from(
+                  new Set(rentals.map((rental) => rental.constructionUserId)),
+              );
+              return forkJoin({
+                equipmentInformation:
+                    this.#equipmentInformation.getEquipmentInformationByIds(
+                        equipmentIds,
+                    ),
+                participantInformation:
+                    this.#participantInformation.getParticipantInformationByUserIds(
+                        participantUserIds,
+                    ),
+              }).pipe(
+                  map(({ equipmentInformation, participantInformation }) => ({
+                    rentals,
+                    equipmentInformation,
+                    participantInformation,
+                  })),
+              );
+            }),
+            takeUntil(sessionEnded),
+        )
+        .subscribe({
+          next: ({ rentals, equipmentInformation, participantInformation }) => {
+            if (readVersion !== this.#readRequestVersion) return;
+            this.#rentalsState.value = rentals;
+            this.#equipmentInformationState.value = new Map(
+                equipmentInformation.map((equipment) => [equipment.id, equipment]),
+            );
+            this.#participantInformationState.value = new Map(
+                participantInformation.map((participant) => [
+                  participant.userId,
+                  participant,
+                ]),
+            );
+            this.#loadingState.value = false;
+            this.#errorState.value = null;
+          },
+          error: (error) => {
+            if (readVersion !== this.#readRequestVersion) return;
+            this.clearRentals();
+            this.#errorState.value = this.#formatError(
+                error,
+                "Failed to load rentals",
+            );
+            this.#loadingState.value = false;
+          },
+        });
   }
   getEquipmentInformation(equipmentId) {
     return this.#equipmentInformationState.value.get(equipmentId);
@@ -347,9 +480,14 @@ export class RentalsStore {
     this.#resolveRentalRequest(requestId, RentalRequestStatus.REJECTED);
   }
   createRentalRequest(rentalRequest) {
-    if (!this.#requesterAccess.canSubmitRentalRequest(rentalRequest.constructionUserId)) {
+    if (
+        !this.#requesterAccess.canSubmitRentalRequest(
+            rentalRequest.constructionUserId,
+        )
+    ) {
       this.#latestCreatedRequestState.value = null;
-      this.#errorState.value = 'Only construction companies can request equipment rental';
+      this.#errorState.value =
+          "Only construction companies can request equipment rental";
       this.#loadingState.value = false;
       return;
     }
@@ -358,58 +496,72 @@ export class RentalsStore {
     this.#subscriptionRequiredState.value = false;
     this.#latestCreatedRequestState.value = null;
     this.#subscriptionAccess
-      .hasActiveSubscription(rentalRequest.rentalCompanyUserId)
-      .pipe(
-        switchMap((hasActiveSubscription) => {
-          if (!hasActiveSubscription) {
-            this.#subscriptionRequiredState.value = true;
-            this.#loadingState.value = false;
-            return EMPTY;
-          }
-          return forkJoin({
-            equipment: this.#equipmentRequestAvailability.assertAvailableForRequest(
-              rentalRequest.equipmentId,
-              rentalRequest.rentalCompanyUserId,
-              rentalRequest.period.startDate,
-              rentalRequest.period.endDate,
-            ),
-            hasOpenBlockingIncident: this.#maintenanceIncidentRestriction.hasOpenBlockingIncident(
-              rentalRequest.equipmentId,
-            ),
-            rentals: this.#rentalsApi.getRentals(),
-          }).pipe(
-            switchMap(({ hasOpenBlockingIncident, rentals }) => {
-              if (hasOpenBlockingIncident) {
-                throw new Error('Equipment has an open blocking maintenance incident');
+        .hasActiveSubscription(rentalRequest.rentalCompanyUserId)
+        .pipe(
+            switchMap((hasActiveSubscription) => {
+              if (!hasActiveSubscription) {
+                this.#subscriptionRequiredState.value = true;
+                this.#loadingState.value = false;
+                return EMPTY;
               }
-              RentalRequestEligibilityPolicy.ensureNoOverlappingCommittedRental(
-                rentalRequest,
-                rentals,
+              return forkJoin({
+                equipment:
+                    this.#equipmentRequestAvailability.assertAvailableForRequest(
+                        rentalRequest.equipmentId,
+                        rentalRequest.rentalCompanyUserId,
+                        rentalRequest.period.startDate,
+                        rentalRequest.period.endDate,
+                    ),
+                hasOpenBlockingIncident:
+                    this.#maintenanceIncidentRestriction.hasOpenBlockingIncident(
+                        rentalRequest.equipmentId,
+                    ),
+                rentals: this.#rentalsApi.getRentals(),
+              }).pipe(
+                  switchMap(({ hasOpenBlockingIncident, rentals }) => {
+                    if (hasOpenBlockingIncident) {
+                      throw new Error(
+                          "Equipment has an open blocking maintenance incident",
+                      );
+                    }
+                    RentalRequestEligibilityPolicy.ensureNoOverlappingCommittedRental(
+                        rentalRequest,
+                        rentals,
+                    );
+                    return this.#rentalsApi.createRentalRequest(rentalRequest);
+                  }),
               );
-              return this.#rentalsApi.createRentalRequest(rentalRequest);
             }),
-          );
-        }),
-        takeUntil(sessionEnded),
-      )
-      .subscribe({
-        next: (createdRequest) => {
-          this.#latestCreatedRequestState.value = createdRequest;
-          this.#subscriptionRequiredState.value = false;
-          this.#loadingState.value = false;
-          this.#errorState.value = null;
-        },
-        error: (error) => {
-          this.#errorState.value = this.#formatError(error, 'Failed to create rental request');
-          this.#subscriptionRequiredState.value = false;
-          this.#loadingState.value = false;
-        },
-      });
+            takeUntil(sessionEnded),
+        )
+        .subscribe({
+          next: (createdRequest) => {
+            this.#latestCreatedRequestState.value = createdRequest;
+            this.#subscriptionRequiredState.value = false;
+            this.#loadingState.value = false;
+            this.#errorState.value = null;
+          },
+          error: (error) => {
+            this.#errorState.value = this.#formatCreateRentalRequestError(error);
+            this.#subscriptionRequiredState.value = false;
+            this.#loadingState.value = false;
+          },
+        });
   }
   registerDelivery(rentalId, deliveredAt, notes) {
-    const currentRental = this.rentals.value.find((rental) => rental.id === rentalId);
+    const currentRental = this.rentals.value.find(
+        (rental) => rental.id === rentalId,
+    );
     if (!currentRental) {
-      this.#errorState.value = 'Rental not found';
+      this.#errorState.value = "Rental not found";
+      return;
+    }
+    if (this.#updatingRentalIdState.value !== null) return;
+    if (
+        RentalLifecycleDatePolicy.deliveryInstantIssue(deliveredAt, currentRental)
+    ) {
+      this.#errorState.value =
+          "Delivery date must be within the rental period and cannot be in the future";
       return;
     }
     const updatedRental = new Rental({
@@ -423,7 +575,10 @@ export class RentalsStore {
     try {
       updatedRental.registerDelivery();
     } catch (error) {
-      this.#errorState.value = this.#formatError(error, 'Failed to register delivery');
+      this.#errorState.value = this.#formatError(
+          error,
+          "Failed to register delivery",
+      );
       return;
     }
     let delivery;
@@ -435,44 +590,60 @@ export class RentalsStore {
         notes: notes.trim(),
       });
     } catch (error) {
-      this.#errorState.value = this.#formatError(error, 'Failed to register delivery');
+      this.#errorState.value = this.#formatError(
+          error,
+          "Failed to register delivery",
+      );
       return;
     }
     this.#updatingRentalIdState.value = rentalId;
     this.#operationSuccessState.value = null;
     this.#errorState.value = null;
     this.#rentalsApi
-      .createDelivery(delivery)
-      .pipe(
-        switchMap(() => this.#rentalsApi.updateRental(updatedRental)),
-        switchMap((savedRental) =>
-          this.#equipmentOperation
-            .markAsRented(savedRental.equipmentId)
-            .pipe(map(() => savedRental)),
-        ),
-        takeUntil(sessionEnded),
-      )
-      .subscribe({
-        next: (savedRental) => {
-          this.#rentalsState.value = ((rentals) =>
-            rentals.map((rental) => (rental.id === savedRental.id ? savedRental : rental)))(
-            this.#rentalsState.value,
-          );
-          this.#updatingRentalIdState.value = null;
-          this.#operationSuccessState.value = 'DELIVERY';
-          this.#errorState.value = null;
-        },
-        error: (error) => {
-          this.#updatingRentalIdState.value = null;
-          this.#operationSuccessState.value = null;
-          this.#errorState.value = this.#formatError(error, 'Failed to register delivery');
-        },
-      });
+        .createDelivery(delivery)
+        .pipe(
+            switchMap(() => this.#rentalsApi.updateRental(updatedRental)),
+            switchMap((savedRental) =>
+                this.#equipmentOperation
+                    .markAsRented(savedRental.equipmentId)
+                    .pipe(map(() => savedRental)),
+            ),
+            takeUntil(sessionEnded),
+        )
+        .subscribe({
+          next: (savedRental) => {
+            this.#rentalsState.value = ((rentals) =>
+                rentals.map((rental) =>
+                    rental.id === savedRental.id ? savedRental : rental,
+                ))(this.#rentalsState.value);
+            this.#updatingRentalIdState.value = null;
+            this.#operationSuccessState.value = "DELIVERY";
+            this.#errorState.value = null;
+          },
+          error: (error) => {
+            this.#updatingRentalIdState.value = null;
+            this.#operationSuccessState.value = null;
+            this.#errorState.value = this.#formatError(
+                error,
+                "Failed to register delivery",
+            );
+          },
+        });
   }
   registerReturn(rentalId, returnedAt, notes, maintenanceRequired) {
-    const currentRental = this.rentals.value.find((rental) => rental.id === rentalId);
+    const currentRental = this.rentals.value.find(
+        (rental) => rental.id === rentalId,
+    );
     if (!currentRental) {
-      this.#errorState.value = 'Rental not found';
+      this.#errorState.value = "Rental not found";
+      return;
+    }
+    if (this.#updatingRentalIdState.value !== null) return;
+    if (
+        RentalLifecycleDatePolicy.returnInstantIssue(returnedAt, currentRental)
+    ) {
+      this.#errorState.value =
+          "Return date cannot precede the rental or be in the future";
       return;
     }
     const updatedRental = new Rental({
@@ -486,7 +657,10 @@ export class RentalsStore {
     try {
       updatedRental.registerReturn();
     } catch (error) {
-      this.#errorState.value = this.#formatError(error, 'Failed to register return');
+      this.#errorState.value = this.#formatError(
+          error,
+          "Failed to register return",
+      );
       return;
     }
     let equipmentReturn;
@@ -499,38 +673,48 @@ export class RentalsStore {
         maintenanceRequired,
       });
     } catch (error) {
-      this.#errorState.value = this.#formatError(error, 'Failed to register return');
+      this.#errorState.value = this.#formatError(
+          error,
+          "Failed to register return",
+      );
       return;
     }
     this.#updatingRentalIdState.value = rentalId;
     this.#operationSuccessState.value = null;
     this.#errorState.value = null;
     this.#rentalsApi
-      .createEquipmentReturn(equipmentReturn)
-      .pipe(
-        switchMap(() => this.#rentalsApi.updateRental(updatedRental)),
-        switchMap((savedRental) => {
-          const equipmentUpdate = equipmentReturn.requiresMaintenance()
-            ? this.#equipmentOperation.markAsMaintenance(savedRental.equipmentId)
-            : this.#equipmentOperation.markAsAvailable(savedRental.equipmentId);
-          return equipmentUpdate.pipe(map(() => savedRental));
-        }),
-        takeUntil(sessionEnded),
-      )
-      .subscribe({
-        next: (savedRental) => {
-          this.#rentalsState.value = ((rentals) =>
-            rentals.filter((rental) => rental.id !== savedRental.id))(this.#rentalsState.value);
-          this.#updatingRentalIdState.value = null;
-          this.#operationSuccessState.value = 'RETURN';
-          this.#errorState.value = null;
-        },
-        error: (error) => {
-          this.#updatingRentalIdState.value = null;
-          this.#operationSuccessState.value = null;
-          this.#errorState.value = this.#formatError(error, 'Failed to register return');
-        },
-      });
+        .createEquipmentReturn(equipmentReturn)
+        .pipe(
+            switchMap(() => this.#rentalsApi.updateRental(updatedRental)),
+            switchMap((savedRental) => {
+              const equipmentUpdate = equipmentReturn.requiresMaintenance()
+                  ? this.#equipmentOperation.markAsMaintenance(
+                      savedRental.equipmentId,
+                  )
+                  : this.#equipmentOperation.markAsAvailable(savedRental.equipmentId);
+              return equipmentUpdate.pipe(map(() => savedRental));
+            }),
+            takeUntil(sessionEnded),
+        )
+        .subscribe({
+          next: (savedRental) => {
+            this.#rentalsState.value = ((rentals) =>
+                rentals.filter((rental) => rental.id !== savedRental.id))(
+                this.#rentalsState.value,
+            );
+            this.#updatingRentalIdState.value = null;
+            this.#operationSuccessState.value = "RETURN";
+            this.#errorState.value = null;
+          },
+          error: (error) => {
+            this.#updatingRentalIdState.value = null;
+            this.#operationSuccessState.value = null;
+            this.#errorState.value = this.#formatError(
+                error,
+                "Failed to register return",
+            );
+          },
+        });
   }
   clearForIdentityChange() {
     ++this.#readRequestVersion;
@@ -550,6 +734,9 @@ export class RentalsStore {
     this.#updatingRequestIdState.value = null;
   }
   clearRentalRequestDetail() {
+    ++this.#readRequestVersion;
+    this.#reschedulingRequestIdSignal.value = null;
+    this.clearReschedulingFeedback();
     this.#selectedRentalRequestState.value = null;
     this.#rentalRequestNotFoundState.value = false;
     this.#equipmentInformationState.value = new Map();
@@ -572,13 +759,15 @@ export class RentalsStore {
     this.#operationSuccessState.value = null;
   }
   #resolveRentalRequest(requestId, targetStatus) {
-    const currentRequest = this.rentalRequests.value.find((request) => request.id === requestId);
+    const currentRequest = this.rentalRequests.value.find(
+        (request) => request.id === requestId,
+    );
     if (!currentRequest) {
-      this.#errorState.value = 'Rental request not found';
+      this.#errorState.value = "Rental request not found";
       return;
     }
     if (!currentRequest.isPending) {
-      this.#errorState.value = 'Only pending rental requests can be updated';
+      this.#errorState.value = "Only pending rental requests can be updated";
       return;
     }
     const updatedRequest = new RentalRequest({
@@ -599,7 +788,10 @@ export class RentalsStore {
         return;
       }
     } catch (error) {
-      this.#errorState.value = this.#formatError(error, 'Failed to update rental request');
+      this.#errorState.value = this.#formatError(
+          error,
+          "Failed to update rental request",
+      );
       return;
     }
     this.#updatingRequestIdState.value = requestId;
@@ -615,39 +807,94 @@ export class RentalsStore {
         status: RentalStatus.CONFIRMED,
       });
       operation = this.#maintenanceIncidentRestriction
-        .hasOpenBlockingIncident(currentRequest.equipmentId)
-        .pipe(
-          switchMap((hasOpenBlockingIncident) => {
-            if (hasOpenBlockingIncident) {
-              throw new Error('Equipment has an open blocking maintenance incident');
-            }
-            return this.#equipmentOperation.reservePeriod(
-              currentRequest.equipmentId,
-              currentRequest.period.startDate,
-              currentRequest.period.endDate,
-            );
-          }),
-          switchMap(() => this.#rentalsApi.createRental(confirmedRental)),
-          switchMap(() => this.#rentalsApi.updateRentalRequest(updatedRequest)),
-        );
+          .hasOpenBlockingIncident(currentRequest.equipmentId)
+          .pipe(
+              switchMap((hasOpenBlockingIncident) => {
+                if (hasOpenBlockingIncident) {
+                  throw new Error(
+                      "Equipment has an open blocking maintenance incident",
+                  );
+                }
+                return this.#equipmentOperation.reservePeriod(
+                    currentRequest.equipmentId,
+                    currentRequest.period.startDate,
+                    currentRequest.period.endDate,
+                );
+              }),
+              switchMap(() => this.#rentalsApi.createRental(confirmedRental)),
+              switchMap(() => this.#rentalsApi.updateRentalRequest(updatedRequest)),
+          );
     } else {
       operation = this.#rentalsApi.updateRentalRequest(updatedRequest);
     }
     operation.pipe(takeUntil(sessionEnded)).subscribe({
       next: (savedRequest) => {
         this.#rentalRequestsState.value = ((requests) =>
-          requests.map((request) => (request.id === savedRequest.id ? savedRequest : request)))(
-          this.#rentalRequestsState.value,
-        );
+            requests.map((request) =>
+                request.id === savedRequest.id ? savedRequest : request,
+            ))(this.#rentalRequestsState.value);
         this.#updatingRequestIdState.value = null;
         this.#errorState.value = null;
       },
       error: (error) => {
         this.#updatingRequestIdState.value = null;
-        this.#errorState.value = this.#formatError(error, 'Failed to update rental request');
+        this.#errorState.value = this.#formatError(
+            error,
+            "Failed to update rental request",
+        );
       },
     });
   }
+
+  #formatCreateRentalRequestError(error) {
+    if (!(typeof error?.status === "number")) {
+      // The existing Rentals API may turn HTTP 409 into a plain Error.
+      // Preserve the status meaning without inventing a specific business cause.
+      if (
+          error instanceof Error &&
+          /^Failed to create entity:\s*409\s*$/.test(error.message)
+      ) {
+        return "RENTALS_UNKNOWN_CONFLICT";
+      }
+      return this.#formatError(error, "Failed to create rental request");
+    }
+    const payload = error.error;
+    const body =
+        payload !== null && typeof payload === "object" ? payload : null;
+    const detail =
+        typeof body?.["detail"] === "string"
+            ? body["detail"]
+            : typeof body?.["message"] === "string"
+                ? body["message"]
+                : typeof payload === "string"
+                    ? payload
+                    : "";
+    // Specific messages are used only when that exact reason was supplied.
+    const explicitReasons = new Set([
+      "Equipment is unavailable for this period",
+      "Equipment already has a confirmed or active rental for the selected period",
+      "Equipment is already reserved for the selected period",
+      "You already have a pending or approved request for this equipment and an overlapping period",
+      "Rental start date cannot be in the past",
+      "Rental company needs an active subscription",
+      "A construction company cannot rent equipment from itself",
+      "Equipment does not belong to the designated rental company",
+      "Equipment not found",
+    ]);
+    if (explicitReasons.has(detail)) return detail;
+    // Spring's localized ProblemDetail can have a general error description
+    // for every 409. Never mislabel that response as a historic-rental overlap.
+    if (error.status === 0) return "RENTALS_NETWORK_ERROR";
+    if (error.status === 401) return "RENTALS_UNAUTHORIZED";
+    if (error.status === 403) return "RENTALS_FORBIDDEN";
+    if (error.status === 404) return "RENTALS_NOT_FOUND";
+    if (error.status === 409) return "RENTALS_UNKNOWN_CONFLICT";
+    if (error.status === 400 || error.status === 422)
+      return "RENTALS_UNKNOWN_VALIDATION";
+    if (error.status >= 500) return "RENTALS_SERVER_ERROR";
+    return "RENTALS_SERVER_ERROR";
+  }
+
   #formatError(error, fallbackMessage) {
     if (error instanceof Error && error.message) {
       return error.message;
@@ -656,5 +903,7 @@ export class RentalsStore {
   }
 }
 
-export const useRentalsStore = defineStore("rentals", () => exposeStore(new RentalsStore()));
+export const useRentalsStore = defineStore("rentals", () =>
+    exposeStore(new RentalsStore()),
+);
 registerStore(RentalsStore, useRentalsStore);
